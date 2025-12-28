@@ -1,18 +1,5 @@
-pub struct Post {
-  author: String,
-  num_comments: u32,
-  media_url: Option<String>,
-  selftext: Option<String>,
-  perma_link: String,
-  subreddit: String,
-  title: String,
-  score: u32,
-  upvote_ratio: f32,
-  creation_time: i64
-}
-
 /*
-structure of the json for a post inside a post listing, for example the reddit front page
+structure of the json for a post inside a post listing, for example the reddit front page or a specific subreddit
 {
 kind: str,
 data: {
@@ -29,12 +16,23 @@ data: {
 }
 */
 
-pub struct Comment {
-  body: String,
-  replies: Vec<Comment>,
-  score: u32,
+pub struct Post {
   author: String,
-  permalink: String
+  num_comments: u32,
+  media_url: Option<String>,
+  selftext: Option<String>,
+  perma_link: String,
+  subreddit: String,
+  title: String,
+  score: u32,
+  upvote_ratio: f32,
+  creation_time: i64
+}
+
+impl Post{
+  pub async fn get_posts(post_collection_url: &str)-> Vec<Post>{
+    todo!()
+  }
 }
 
 /*
@@ -64,3 +62,17 @@ structure of the json for a post to find its comments
   
 ]
  */
+
+pub struct Comment {
+  body: String,
+  replies: Vec<Comment>,
+  score: u32,
+  author: String,
+  permalink: String
+}
+
+impl Comment{
+  pub fn get_comments(post_url: &str) -> Vec<Comment>{
+    todo!()
+  }
+}
