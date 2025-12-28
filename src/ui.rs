@@ -3,6 +3,8 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::sync::Arc;
 use std::time::Duration;
+use std::sync::mpsc::{channel, Sender, Receiver};
+use std::thread;
 
 use crossterm::event::{self, Event, KeyCode};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
@@ -13,7 +15,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Clear};
 use ratatui::Terminal;
 
-use crate::reddit_api::model::{Comment, Post};
+use crate::reddit_api::model::{Comment, Post, FetchError};
 
 #[derive(PartialEq, Eq)]
 enum View {
@@ -47,6 +49,9 @@ struct App {
 
     // runtime for async ops
     rt: Arc<tokio::runtime::Runtime>,
+
+    // state for background loading
+    loading_posts: bool,
 }
 
 impl App {
@@ -64,13 +69,16 @@ impl App {
             focus_selected: 0,
             expanded: HashSet::new(),
             rt,
+            loading_posts: false,
         }
     }
 
-    fn submit_command(&mut self) -> bool {
+    /// Submit the active command. Returns (quit_flag, optional_target_url).
+    /// This no longer blocks; callers should spawn a background fetch if a target is returned.
+    fn submit_command(&mut self) -> (bool, Option<String>) {
         let cmd = self.input.trim();
         if cmd == "q" {
-            return true;
+            return (true, None);
         }
 
         if !cmd.is_empty() {
@@ -88,23 +96,14 @@ impl App {
                 self.messages.push(format!(":{} (loading)", cmd));
             }
 
-            let res = self.rt.block_on(Post::get_posts(&target));
-            match res {
-                Ok(posts) => {
-                    self.posts = posts;
-                    self.list_selected = 0;
-                    self.view = View::List;
-                    self.messages.push(format!("Loaded {} posts", self.posts.len()));
-                }
-                Err(e) => {
-                    self.messages.push(format!("Failed to load posts: {}", e));
-                }
-            }
+            self.input.clear();
+            self.command_mode = false;
+            (false, Some(target))
+        } else {
+            self.input.clear();
+            self.command_mode = false;
+            (false, None)
         }
-
-        self.input.clear();
-        self.command_mode = false;
-        false
     }
 
     fn open_focused(&mut self) {
@@ -204,13 +203,28 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result
     let rt = Arc::new(tokio::runtime::Runtime::new()?);
     let mut app = App::new(rt);
 
-    // Initial load: homepage
-    match app.rt.block_on(Post::get_posts("https://www.reddit.com/.json")) {
-        Ok(posts) => { app.posts = posts; app.messages.push(format!("Loaded {} posts (home)", app.posts.len())); },
-        Err(e) => app.messages.push(format!("Failed to load homepage: {}", e)),
-    }
+    // Initial load: homepage (spawn background fetch so UI can show a loading indicator)
+    let (tx, rx) = channel::<Result<Vec<Post>, FetchError>>();
+    app.loading_posts = true;
+    let tx0 = tx.clone();
+    let rt0 = app.rt.clone();
+    let url0 = "https://www.reddit.com/.json".to_string();
+    thread::spawn(move || {
+        let res = rt0.block_on(Post::get_posts(&url0));
+        let _ = tx0.send(res);
+    });
+
+    // we'll poll `rx` in the main loop to pick up the result
 
     loop {
+        // check for background post load completion
+        if let Ok(res) = rx.try_recv() {
+            app.loading_posts = false;
+            match res {
+                Ok(posts) => { app.posts = posts; app.list_selected = 0; app.messages.push(format!("Loaded {} posts", app.posts.len())); }
+                Err(e) => { app.messages.push(format!("Failed to load posts: {}", e)); }
+            }
+        }
         terminal.draw(|f| {
             let area = f.area();
 
@@ -310,6 +324,18 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result
                 let cmd = Paragraph::new(cmd_text).block(Block::default().borders(Borders::ALL).title("Command"));
                 f.render_widget(cmd.style(style), cmd_area);
             }
+
+            // Loading overlay (shows while posts are being fetched)
+            if app.loading_posts {
+                let width = std::cmp::min(50u16, area.width.saturating_sub(10));
+                let x = area.x + (area.width.saturating_sub(width)) / 2;
+                // center vertically
+                let y = area.y + (area.height / 2).saturating_sub(1);
+                let popup = Rect::new(x, y, width, 3);
+                f.render_widget(Clear, popup);
+                let p = Paragraph::new("Loading posts...").block(Block::default().borders(Borders::ALL).title("Loading"));
+                f.render_widget(p, popup);
+            }
         })?;
 
         // Poll for events
@@ -320,7 +346,20 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result
                         KeyCode::Char(ch) => app.input.push(ch),
                         KeyCode::Backspace => { app.input.pop(); }
                         KeyCode::Esc => { app.command_mode = false; app.input.clear(); }
-                        KeyCode::Enter => { if app.submit_command() { break; } }
+                        KeyCode::Enter => {
+                            let (quit, target) = app.submit_command();
+                            if quit { break; }
+                            if let Some(target) = target {
+                                app.loading_posts = true;
+                                app.posts.clear();
+                                let tx2 = tx.clone();
+                                let rt2 = app.rt.clone();
+                                thread::spawn(move || {
+                                    let res = rt2.block_on(Post::get_posts(&target));
+                                    let _ = tx2.send(res);
+                                });
+                            }
+                        }
                         _ => {}
                     }
                 } else {
