@@ -23,6 +23,15 @@ enum View {
     Focus,
 }
 
+use std::collections::HashSet;
+
+struct FocusItem {
+    pub text: String,
+    pub path: String, // e.g. "0", "0.1" for nested comments, or "post" for the post
+    pub depth: usize,
+    pub has_children: bool,
+}
+
 struct App {
     command_mode: bool,
     input: String,
@@ -36,8 +45,9 @@ struct App {
     // focus view state
     focused: Option<Post>,
     comments: Vec<Comment>,
-    focus_items: Vec<String>, // flattened view of focused post + comments
+    focus_items: Vec<FocusItem>, // flattened view of focused post + comments
     focus_selected: usize,
+    expanded: HashSet<String>, // set of paths that are expanded
 
     // runtime for async ops
     rt: Arc<tokio::runtime::Runtime>,
@@ -56,6 +66,7 @@ impl App {
             comments: Vec::new(),
             focus_items: Vec::new(),
             focus_selected: 0,
+            expanded: HashSet::new(),
             rt,
         }
     }
@@ -112,8 +123,7 @@ impl App {
         self.focus_selected = 0;
         self.comments.clear();
         self.focus_items.clear();
-        // first item is the post title and metadata
-        self.focus_items.push(format!("{} - /r/{} ({} comments)", p.title, p.subreddit, p.num_comments));
+        self.expanded.clear();
         self.focused = Some(p);
         self.view = View::Focus;
     }
@@ -125,6 +135,7 @@ impl App {
             match res {
                 Ok(c) => {
                     self.comments = c;
+                    self.expanded.clear(); // start collapsed
                     self.build_focus_items();
                     self.messages.push(format!("Loaded {} comments", self.comments.len()));
                 }
@@ -137,20 +148,31 @@ impl App {
 
     fn build_focus_items(&mut self) {
         self.focus_items.clear();
-        if let Some(p) = &self.focused {
-            self.focus_items.push(format!("POST: {} - /r/{}", p.title, p.subreddit));
-        }
-        fn walk(comments: &Vec<Comment>, out: &mut Vec<String>, depth: usize) {
-            for c in comments {
+
+        fn walk(comments: &Vec<Comment>, out: &mut Vec<FocusItem>, path_prefix: String, depth: usize, expanded: &HashSet<String>) {
+            for (i, c) in comments.iter().enumerate() {
+                let path = if path_prefix.is_empty() { format!("{}", i) } else { format!("{}.{}", path_prefix, i) };
+                let has_children = !c.replies.is_empty();
                 let indent = "  ".repeat(depth);
                 let body_summary = c.body.lines().next().unwrap_or("");
-                out.push(format!("{}- {} (by {})", indent, body_summary, c.author));
-                if !c.replies.is_empty() {
-                    walk(&c.replies, out, depth+1);
+                let mut text = format!("{}- {} (by {})", indent, body_summary, c.author);
+                if has_children {
+                    if expanded.contains(&path) {
+                        text = format!("[-] {}", text);
+                    } else {
+                        text = format!("[+] {}", text);
+                    }
+                }
+                out.push(FocusItem{ text, path: path.clone(), depth, has_children });
+                // only walk into children if expanded contains this path
+                if has_children && expanded.contains(&path) {
+                    walk(&c.replies, out, path.clone(), depth+1, expanded);
                 }
             }
         }
-        walk(&self.comments, &mut self.focus_items, 0);
+
+        walk(&self.comments, &mut self.focus_items, String::new(), 0, &self.expanded);
+
         if self.focus_selected >= self.focus_items.len() {
             self.focus_selected = 0;
         }
@@ -230,22 +252,41 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result
                 let p = Paragraph::new(msgs).block(Block::default().borders(Borders::ALL).title("Status/Logs"));
                 f.render_widget(p, right);
             } else {
-                // Focus view
-                let right_chunks = Layout::default().direction(Direction::Vertical).constraints([Constraint::Length(3), Constraint::Min(1)]).split(right);
+                // Focus view: title, body (media + text), comments
+                let right_chunks = Layout::default().direction(Direction::Vertical).constraints([Constraint::Length(3), Constraint::Length(6), Constraint::Min(1)]).split(right);
                 if let Some(pst) = &app.focused {
-                    let title = Paragraph::new(format!("{}\n/r/{} — {} comments", pst.title, pst.subreddit, pst.num_comments))
-                        .block(Block::default().borders(Borders::ALL).title("Post"));
+                    // title
+                    let title = Paragraph::new(format!("{}", pst.title))
+                        .block(Block::default().borders(Borders::ALL).title(format!("Post — /r/{} ({} comments)", pst.subreddit, pst.num_comments)));
                     f.render_widget(title, right_chunks[0]);
 
+                    // body area (selftext + media link)
+                    let mut body = String::new();
+                    if let Some(selftext) = &pst.selftext {
+                        if !selftext.is_empty() {
+                            body.push_str(selftext);
+                            body.push('\n');
+                        }
+                    }
+                    if let Some(media) = &pst.media_url {
+                        body.push_str(&format!("Media: {}", media));
+                    }
+                    if body.is_empty() {
+                        body = "(no body)".to_string();
+                    }
+                    let body_p = Paragraph::new(body).block(Block::default().borders(Borders::ALL).title("Body"));
+                    f.render_widget(body_p, right_chunks[1]);
+
                     // comments area
-                    let comments_items: Vec<ListItem> = app.focus_items.iter().map(|s| ListItem::new(s.clone())).collect();
-                    let comments = List::new(comments_items).block(Block::default().borders(Borders::ALL).title("Comments (press 'l' to load)"));
+                    let comments_items: Vec<ListItem> = app.focus_items.iter().map(|it| ListItem::new(it.text.clone())).collect();
+                    let comments = List::new(comments_items).block(Block::default().borders(Borders::ALL).title("Comments (press 'l' to load, Enter to expand)"))
+                        .highlight_style(Style::default().bg(Color::Blue).fg(Color::White).add_modifier(Modifier::BOLD));
                     // Render list with selection handling
                     let mut state = ratatui::widgets::ListState::default();
                     if !app.focus_items.is_empty() {
                         state.select(Some(app.focus_selected));
                     }
-                    f.render_stateful_widget(comments, right_chunks[1], &mut state);
+                    f.render_stateful_widget(comments, right_chunks[2], &mut state);
                 } else {
                     let p = Paragraph::new("No post focused").block(Block::default().borders(Borders::ALL).title("Post"));
                     f.render_widget(p, right);
@@ -307,12 +348,34 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result
                             if app.view == View::List {
                                 app.open_focused();
                             } else {
-                                // if not post (i.e., a comment), show comment body in messages
-                                if app.focus_selected > 0 {
-                                    let idx = app.focus_selected - 1; // because 0 is the post
+                                // if not post (i.e., a comment), toggle expand/collapse when applicable
+                                if app.focus_selected == 0 {
+                                    // nothing for the post
+                                } else {
+                                    let idx = app.focus_selected;
                                     if idx < app.focus_items.len() {
-                                        let line = app.focus_items[app.focus_selected].clone();
-                                        app.messages.push(format!("Selected: {}", line));
+                                        let path = app.focus_items[idx].path.clone();
+                                        let has_children = app.focus_items[idx].has_children;
+                                        if has_children {
+                                            if app.expanded.contains(&path) {
+                                                app.expanded.remove(&path);
+                                            } else {
+                                                app.expanded.insert(path.clone());
+                                            }
+                                            // remember selected path and rebuild items
+                                            let selected_path = path.clone();
+                                            app.build_focus_items();
+                                            // re-select the same item if present
+                                            if let Some(pos) = app.focus_items.iter().position(|it| it.path == selected_path) {
+                                                app.focus_selected = pos;
+                                            } else {
+                                                app.focus_selected = 0;
+                                            }
+                                        } else {
+                                            // leaf comment: show full comment body in messages
+                                            let text = app.focus_items[idx].text.clone();
+                                            app.messages.push(format!("Comment selected: {}", text));
+                                        }
                                     }
                                 }
                             }
