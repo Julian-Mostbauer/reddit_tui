@@ -40,18 +40,18 @@ impl fmt::Display for FetchError {
 
 impl std::error::Error for FetchError {}
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Post {
-    author: String,
-    num_comments: u32,
-    media_url: Option<String>,
-    selftext: Option<String>,
-    perma_link: String,
-    subreddit: String,
-    title: String,
-    score: u32,
-    upvote_ratio: f32,
-    creation_time: i64,
+    pub author: String,
+    pub num_comments: u32,
+    pub media_url: Option<String>,
+    pub selftext: Option<String>,
+    pub perma_link: String,
+    pub subreddit: String,
+    pub title: String,
+    pub score: u32,
+    pub upvote_ratio: f32,
+    pub creation_time: i64,
 }
 
 impl Post {
@@ -190,13 +190,13 @@ structure of the json for a post to find its comments
 ]
  */
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Comment {
-    body: String,
-    replies: Vec<Comment>,
-    score: u32,
-    author: String,
-    permalink: String,
+    pub body: String,
+    pub replies: Vec<Comment>,
+    pub score: u32,
+    pub author: String,
+    pub permalink: String,
 }
 
 impl Comment {

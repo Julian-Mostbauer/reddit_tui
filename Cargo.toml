@@ -9,6 +9,8 @@ crossterm = "0.29"
 serde_json = "1.0"
 reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls", "blocking"] }
 
+tokio = { version = "1", features = ["rt-multi-thread"] }
+
 [dev-dependencies]
 # used to run async tests for `Post::get_posts`
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
