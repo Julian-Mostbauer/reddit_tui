@@ -1,44 +1,5 @@
-/*
-structure of the json for a post inside a post listing, for example the reddit front page or a specific subreddit
-{
-kind: str,
-data: {
-  -- some unimportant fields
-  children: [
-      {
-        kind: str, -- allways t3 for posts
-        data: {
-            -- here is the actual data of the post. There are many fields, most are not used by my model or under a different name
-        }
-      }
-    ]
-  }
-}
-*/
-
 use serde_json::Value;
-use std::fmt;
-
-#[derive(Debug)]
-pub enum FetchError {
-    Io(std::io::Error),
-    Http(reqwest::Error),
-    Status(u16),
-    Parse(String),
-}
-
-impl fmt::Display for FetchError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            FetchError::Io(e) => write!(f, "IO error: {}", e),
-            FetchError::Http(e) => write!(f, "HTTP error: {}", e),
-            FetchError::Status(code) => write!(f, "HTTP status error: {}", code),
-            FetchError::Parse(s) => write!(f, "Parse error: {}", s),
-        }
-    }
-}
-
-impl std::error::Error for FetchError {}
+pub use crate::reddit_api::fetch::FetchError;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
@@ -57,36 +18,9 @@ pub struct Post {
 
 impl Post {
     pub async fn get_posts(post_collection_url: &str) -> Result<Vec<Post>, FetchError> {
-        // support local files (e.g. "src/reddit_api/json_examples/post_listing_with_two_posts.json"), file:// URIs,
-        // or http(s) URLs like "https://www.reddit.com/.json"
-        let content = if post_collection_url.starts_with("http://")
-            || post_collection_url.starts_with("https://")
-        {
-            // fetch over HTTP with a User-Agent (reddit rejects empty/default agents)
-            let client = reqwest::Client::builder()
-                .user_agent("reddit_tui/0.1")
-                .build()
-                .map_err(FetchError::Http)?;
-            let resp = client
-                .get(post_collection_url)
-                .send()
-                .await
-                .map_err(FetchError::Http)?;
-            if !resp.status().is_success() {
-                return Err(FetchError::Status(resp.status().as_u16()));
-            }
-            resp.text().await.map_err(FetchError::Http)?
-        } else {
-            let path = if let Some(p) = post_collection_url.strip_prefix("file://") {
-                p
-            } else {
-                post_collection_url
-            };
-            std::fs::read_to_string(path).map_err(FetchError::Io)?
-        };
-
-        let json: Value =
-            serde_json::from_str(&content).map_err(|e| FetchError::Parse(e.to_string()))?;
+        // Delegate I/O to the `fetch` module and then parse the JSON
+        let content = crate::reddit_api::fetch::fetch_content(post_collection_url).await?;
+        let json = crate::reddit_api::fetch::parse_json(&content)?;
 
         let mut out = Vec::new();
 
@@ -169,34 +103,6 @@ impl Post {
     }
 }
 
-/*
-structure of the json for a post to find its comments
-[
--- the first object is unimportant
-  {
-    kind: str,
-    data: obj
-  },
--- the second object contains the usefull data
-  {
-    kind: str,
-    data: {
-      -- a bunch of unimportant misc. fields
-      -- the children array contains the comments.
-      children: [
-        {
-        kind: str, -- for comments allways t1
-        data: {
-          -- here is the actual data of the comments. There are many fields, most are not used by my model or under a different name
-          }
-        }
-      ]
-    }
-  },
-
-]
- */
-
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Comment {
@@ -209,33 +115,9 @@ pub struct Comment {
 
 impl Comment {
     pub async fn get_comments(post_url: &str) -> Result<Vec<Comment>, FetchError> {
-        // support local files (e.g. "src/reddit_api/json_examples/post_with_one_comment.json")
-        // or http(s) urls (async HTTP using reqwest with a User-Agent)
-        let content = if post_url.starts_with("http://") || post_url.starts_with("https://") {
-            let client = reqwest::Client::builder()
-                .user_agent("reddit_tui/0.1")
-                .build()
-                .map_err(FetchError::Http)?;
-            let resp = client
-                .get(post_url)
-                .send()
-                .await
-                .map_err(FetchError::Http)?;
-            if !resp.status().is_success() {
-                return Err(FetchError::Status(resp.status().as_u16()));
-            }
-            resp.text().await.map_err(FetchError::Http)?
-        } else {
-            let path = if let Some(p) = post_url.strip_prefix("file://") {
-                p
-            } else {
-                post_url
-            };
-            std::fs::read_to_string(path).map_err(FetchError::Io)?
-        };
-
-        let json: Value =
-            serde_json::from_str(&content).map_err(|e| FetchError::Parse(e.to_string()))?;
+        // Delegate I/O to the `fetch` module and parse JSON
+        let content = crate::reddit_api::fetch::fetch_content(post_url).await?;
+        let json = crate::reddit_api::fetch::parse_json(&content)?;
 
         // The expected structure is an array where the second element contains comments
         let mut out = Vec::new();
