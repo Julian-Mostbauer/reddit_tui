@@ -6,3 +6,8 @@ edition = "2024"
 [dependencies]
 ratatui = "0.30.0"
 crossterm = "0.29"
+serde_json = "1.0"
+
+[dev-dependencies]
+# used to run async tests for `Post::get_posts`
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
