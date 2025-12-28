@@ -40,6 +40,7 @@ impl fmt::Display for FetchError {
 
 impl std::error::Error for FetchError {}
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Post {
     pub author: String,
@@ -66,7 +67,11 @@ impl Post {
                 .user_agent("reddit_tui/0.1")
                 .build()
                 .map_err(FetchError::Http)?;
-            let resp = client.get(post_collection_url).send().await.map_err(FetchError::Http)?;
+            let resp = client
+                .get(post_collection_url)
+                .send()
+                .await
+                .map_err(FetchError::Http)?;
             if !resp.status().is_success() {
                 return Err(FetchError::Status(resp.status().as_u16()));
             }
@@ -80,7 +85,8 @@ impl Post {
             std::fs::read_to_string(path).map_err(FetchError::Io)?
         };
 
-        let json: Value = serde_json::from_str(&content).map_err(|e| FetchError::Parse(e.to_string()))?;
+        let json: Value =
+            serde_json::from_str(&content).map_err(|e| FetchError::Parse(e.to_string()))?;
 
         let mut out = Vec::new();
 
@@ -191,6 +197,7 @@ structure of the json for a post to find its comments
 ]
  */
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Comment {
     pub body: String,
@@ -209,7 +216,11 @@ impl Comment {
                 .user_agent("reddit_tui/0.1")
                 .build()
                 .map_err(FetchError::Http)?;
-            let resp = client.get(post_url).send().await.map_err(FetchError::Http)?;
+            let resp = client
+                .get(post_url)
+                .send()
+                .await
+                .map_err(FetchError::Http)?;
             if !resp.status().is_success() {
                 return Err(FetchError::Status(resp.status().as_u16()));
             }
@@ -223,20 +234,20 @@ impl Comment {
             std::fs::read_to_string(path).map_err(FetchError::Io)?
         };
 
-        let json: Value = serde_json::from_str(&content).map_err(|e| FetchError::Parse(e.to_string()))?;
+        let json: Value =
+            serde_json::from_str(&content).map_err(|e| FetchError::Parse(e.to_string()))?;
 
         // The expected structure is an array where the second element contains comments
         let mut out = Vec::new();
-        if let Some(second) = json.as_array().and_then(|a| a.get(1)) {
-            if let Some(children) = second
+        if let Some(second) = json.as_array().and_then(|a| a.get(1))
+            && let Some(children) = second
                 .get("data")
                 .and_then(|d| d.get("children"))
                 .and_then(|c| c.as_array())
-            {
-                for child in children {
-                    if let Some(comment) = parse_comment(child) {
-                        out.push(comment);
-                    }
+        {
+            for child in children {
+                if let Some(comment) = parse_comment(child) {
+                    out.push(comment);
                 }
             }
         }
@@ -273,18 +284,16 @@ fn parse_comment(v: &Value) -> Option<Comment> {
         .to_string();
 
     let mut replies = Vec::new();
-    if let Some(rep) = data.get("replies") {
-        if rep.is_object() {
-            if let Some(children) = rep
-                .get("data")
-                .and_then(|d| d.get("children"))
-                .and_then(|c| c.as_array())
-            {
-                for ch in children {
-                    if let Some(rc) = parse_comment(ch) {
-                        replies.push(rc);
-                    }
-                }
+    if let Some(rep) = data.get("replies")
+        && rep.is_object()
+        && let Some(children) = rep
+            .get("data")
+            .and_then(|d| d.get("children"))
+            .and_then(|c| c.as_array())
+    {
+        for ch in children {
+            if let Some(rc) = parse_comment(ch) {
+                replies.push(rc);
             }
         }
     }
@@ -305,14 +314,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_posts_from_file() {
-        let posts = Post::get_posts("src/reddit_api/json_examples/post_listing_with_two_posts.json").await.expect("get_posts failed");
+        let posts =
+            Post::get_posts("src/reddit_api/json_examples/post_listing_with_two_posts.json")
+                .await
+                .expect("get_posts failed");
 
         // Expect two posts in the example
         assert_eq!(posts.len(), 2);
 
         let p0 = &posts[0];
         // check that some key fields parsed correctly
-        assert!(p0.title.len() > 0);
+        assert!(!p0.title.is_empty());
         assert_eq!(p0.subreddit, "AskReddit");
         assert!(p0.num_comments > 0);
         // this sample is a self post and should not have a media URL
@@ -354,7 +366,7 @@ mod tests {
 
         let p0 = &posts[0];
         // check that some key fields parsed correctly
-        assert!(p0.title.len() > 0);
+        assert!(!p0.title.is_empty());
         assert_eq!(p0.subreddit, "AskReddit");
         assert!(p0.num_comments > 0);
 
@@ -365,16 +377,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_comments_from_file() {
-        let comments = Comment::get_comments("src/reddit_api/json_examples/post_with_one_comment.json").await.expect("get_comments failed");
+        let comments =
+            Comment::get_comments("src/reddit_api/json_examples/post_with_one_comment.json")
+                .await
+                .expect("get_comments failed");
         assert!(!comments.is_empty());
 
         let c0 = &comments[0];
-        assert!(c0.body.len() > 0);
-        assert!(c0.author.len() > 0);
+        assert!(!c0.body.is_empty());
+        assert!(!c0.author.is_empty());
 
         // ensure nested replies are parsed (if present in the example)
         if !c0.replies.is_empty() {
-            assert!(c0.replies[0].body.len() > 0);
+            assert!(!c0.replies[0].body.is_empty());
         }
     }
 
@@ -401,17 +416,19 @@ mod tests {
         });
 
         let url = format!("http://{}/comments.json", addr);
-        let comments = Comment::get_comments(&url).await.expect("get_comments http failed");
+        let comments = Comment::get_comments(&url)
+            .await
+            .expect("get_comments http failed");
 
         assert!(!comments.is_empty());
 
         let c0 = &comments[0];
-        assert!(c0.body.len() > 0);
-        assert!(c0.author.len() > 0);
+        assert!(!c0.body.is_empty());
+        assert!(!c0.author.is_empty());
 
         // ensure nested replies are parsed (if present in the example)
         if !c0.replies.is_empty() {
-            assert!(c0.replies[0].body.len() > 0);
+            assert!(!c0.replies[0].body.is_empty());
         }
     }
 
@@ -423,8 +440,13 @@ mod tests {
             return;
         }
 
-        let p = Post::get_posts("https://www.reddit.com/.json").await.expect("get_posts failed");
-        assert!(!p.is_empty(), "expected to parse at least one post from Reddit");
+        let p = Post::get_posts("https://www.reddit.com/.json")
+            .await
+            .expect("get_posts failed");
+        assert!(
+            !p.is_empty(),
+            "expected to parse at least one post from Reddit"
+        );
         dbg!(p);
     }
 
@@ -454,7 +476,7 @@ mod tests {
         let url = format!("http://{}/no.json", addr);
         let res = Post::get_posts(&url).await;
         match res {
-            Err(FetchError::Status(code)) if code == 404 => {}
+            Err(FetchError::Status(404)) => {}
             other => panic!("expected Status(404), got {:?}", other),
         }
     }
@@ -470,7 +492,8 @@ mod tests {
                 let body = "this is not json";
                 let response = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}",
-                    body.len(), body
+                    body.len(),
+                    body
                 );
                 let _ = stream.write(response.as_bytes());
             }
@@ -508,7 +531,7 @@ mod tests {
         let url = format!("http://{}/no_comments.json", addr);
         let res = Comment::get_comments(&url).await;
         match res {
-            Err(FetchError::Status(code)) if code == 404 => {}
+            Err(FetchError::Status(404)) => {}
             other => panic!("expected Status(404), got {:?}", other),
         }
     }
@@ -523,7 +546,8 @@ mod tests {
                 let body = "not json";
                 let response = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}",
-                    body.len(), body
+                    body.len(),
+                    body
                 );
                 let _ = stream.write(response.as_bytes());
             }
