@@ -3,7 +3,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::sync::Arc;
 use std::time::Duration;
-use std::sync::mpsc::{channel, Sender, Receiver};
+use std::sync::mpsc::channel;
 use std::thread;
 
 use crossterm::event::{self, Event, KeyCode};
@@ -13,6 +13,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Clear, Wrap};
+
 use ratatui::Terminal;
 
 use crate::reddit_api::model::{Comment, Post, FetchError};
@@ -24,7 +25,9 @@ enum View {
 }
 
 struct FocusItem {
-    pub text: String,
+    pub body: String,
+    pub author: String,
+    pub score: u32,
     pub path: String, // e.g. "0", "0.1" for nested comments
     pub depth: usize,
     pub has_children: bool,
@@ -146,17 +149,14 @@ impl App {
                 let path = if path_prefix.is_empty() { format!("{}", i) } else { format!("{}.{}", path_prefix, i) };
                 let has_children = !c.replies.is_empty();
                 let indent = "  ".repeat(depth);
-                let body_summary = c.body.lines().next().unwrap_or("");
-                // Place fold marker after the indentation so it moves with the comment
-                let text = if has_children {
-                    let marker = if expanded.contains(&path) { "[-]" } else { "[+]" };
-                    // marker followed by content (no extra '-'). Indentation stays with the marker.
-                    format!("{}{} {} (by {})", indent, marker, body_summary, c.author)
+                let body_full = c.body.clone();
+                // cap extremely long comment bodies to keep the UI responsive
+                let body_snip = if body_full.chars().count() > 400 {
+                    body_full.chars().take(400).collect::<String>() + "..."
                 } else {
-                    // leaf comments show the inactive marker '[/]'
-                    format!("{}[/] {} (by {})", indent, body_summary, c.author)
+                    body_full.clone()
                 };
-                out.push(FocusItem{ text, path: path.clone(), depth, has_children });
+                out.push(FocusItem{ body: body_snip, author: c.author.clone(), score: c.score, path: path.clone(), depth, has_children });
                 if has_children && expanded.contains(&path) {
                     walk(&c.replies, out, path.clone(), depth+1, expanded);
                 }
@@ -185,6 +185,58 @@ fn wrapped_lines(text: &str, width: u16) -> u16 {
         }
     }
     if lines == 0 { 1 } else { lines }
+}
+
+// Simple word-wrapping into lines of at most `width` characters (approximate, splits long words)
+fn wrap_words(text: &str, width: usize) -> Vec<String> {
+    if width == 0 { return vec![text.to_string()] }
+    let mut out = Vec::new();
+    for para in text.split('\n') {
+        let mut line = String::new();
+        for word in para.split_whitespace() {
+            if line.is_empty() {
+                if word.chars().count() > width {
+                    // hard-split long word
+                    let mut start = 0;
+                    let chars: Vec<char> = word.chars().collect();
+                    while start < chars.len() {
+                        let end = std::cmp::min(start + width, chars.len());
+                        out.push(chars[start..end].iter().collect());
+                        start = end;
+                    }
+                } else {
+                    line.push_str(word);
+                }
+            } else {
+                let potential = line.chars().count() + 1 + word.chars().count();
+                if potential <= width {
+                    line.push(' ');
+                    line.push_str(word);
+                } else {
+                    out.push(line.clone());
+                    line.clear();
+                    if word.chars().count() > width {
+                        let mut start = 0;
+                        let chars: Vec<char> = word.chars().collect();
+                        while start < chars.len() {
+                            let end = std::cmp::min(start + width, chars.len());
+                            out.push(chars[start..end].iter().collect());
+                            start = end;
+                        }
+                    } else {
+                        line.push_str(word);
+                    }
+                }
+            }
+        }
+        if !line.is_empty() {
+            out.push(line.clone());
+        }
+        // preserve paragraph break as an empty line
+        if para != "" { /* do nothing */ } else { out.push(String::new()); }
+    }
+    if out.is_empty() { out.push(String::new()); }
+    out
 }
 
 fn log_command(cmd: &str) -> std::io::Result<()> {
@@ -337,7 +389,33 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result
                     f.render_widget(body_p, right_chunks[1]);
 
                     // comments area
-                    let comments_items: Vec<ListItem> = app.focus_items.iter().map(|it| ListItem::new(it.text.clone())).collect();
+                    let carea = right_chunks[2];
+                    let col_width = carea.width as usize;
+                    let comments_items: Vec<ListItem> = app.focus_items.iter().map(|it| {
+                        let indent = "  ".repeat(it.depth);
+                        let marker = if it.has_children { if app.expanded.contains(&it.path) { "[-]" } else { "[+]" } } else { "[/]" };
+                        let prefix_len = indent.chars().count() + marker.chars().count() + 1; // +1 for space
+                        let content_width = if col_width > prefix_len { col_width - prefix_len } else { 1 };
+
+                        // wrap body into lines
+                        let lines = wrap_words(&it.body, content_width);
+                        let mut string_lines: Vec<String> = Vec::new();
+                        for (i, ln) in lines.iter().enumerate() {
+                            let line = if i == 0 {
+                                format!("{}{} {}", indent, marker, ln)
+                            } else {
+                                let cont_prefix = " ".repeat(marker.chars().count() + 1);
+                                format!("{}{}{}", indent, cont_prefix, ln)
+                            };
+                            string_lines.push(line);
+                        }
+
+                        let meta = format!("{}  by {}  • ↑ {} ↓", indent, it.author, it.score);
+                        string_lines.push(meta);
+
+                        let content = string_lines.join("\n");
+                        ListItem::new(content)
+                    }).collect();
                     let comments = List::new(comments_items).block(Block::default().borders(Borders::ALL).title("Comments (press 'l' to load, Enter to expand)"))
                         .highlight_style(Style::default().bg(Color::Blue).fg(Color::White).add_modifier(Modifier::BOLD));
                     // Render list with selection handling
@@ -468,7 +546,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result
                                             }
                                         } else {
                                             // leaf comment: show full comment body in messages
-                                            let text = app.focus_items[idx].text.clone();
+                                            let text = app.focus_items[idx].body.clone();
                                             app.messages.push(format!("Comment selected: {}", text));
                                         }
                                     }
