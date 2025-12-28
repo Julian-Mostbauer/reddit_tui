@@ -147,8 +147,6 @@ impl App {
                 // undo expansion
                 self.expanded.remove(&selected_path);
                 self.build_focus_items();
-                self.flash_message = Some("No visible replies to expand".to_string());
-                self.flash_ttl = 30;
             }
             // re-select the same item if present
             if let Some(pos) = self
