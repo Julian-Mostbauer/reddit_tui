@@ -52,6 +52,7 @@ struct App {
 
     // state for background loading
     loading_posts: bool,
+    loading_comments: bool,
 }
 
 impl App {
@@ -70,6 +71,7 @@ impl App {
             expanded: HashSet::new(),
             rt,
             loading_posts: false,
+            loading_comments: false,
         }
     }
 
@@ -145,14 +147,15 @@ impl App {
                 let has_children = !c.replies.is_empty();
                 let indent = "  ".repeat(depth);
                 let body_summary = c.body.lines().next().unwrap_or("");
-                let mut text = format!("{}- {} (by {})", indent, body_summary, c.author);
-                if has_children {
-                    if expanded.contains(&path) {
-                        text = format!("[-] {}", text);
-                    } else {
-                        text = format!("[+] {}", text);
-                    }
-                }
+                // Place fold marker after the indentation so it moves with the comment
+                let text = if has_children {
+                    let marker = if expanded.contains(&path) { "[-]" } else { "[+]" };
+                    // marker followed by content (no extra '-'). Indentation stays with the marker.
+                    format!("{}{} {} (by {})", indent, marker, body_summary, c.author)
+                } else {
+                    // leaf comments show the inactive marker '[/]'
+                    format!("{}[/] {} (by {})", indent, body_summary, c.author)
+                };
                 out.push(FocusItem{ text, path: path.clone(), depth, has_children });
                 if has_children && expanded.contains(&path) {
                     walk(&c.replies, out, path.clone(), depth+1, expanded);
@@ -205,6 +208,8 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result
 
     // Initial load: homepage (spawn background fetch so UI can show a loading indicator)
     let (tx, rx) = channel::<Result<Vec<Post>, FetchError>>();
+    // channel for comment loads
+    let (ctx, crx) = channel::<Result<Vec<Comment>, FetchError>>();
     app.loading_posts = true;
     let tx0 = tx.clone();
     let rt0 = app.rt.clone();
@@ -214,7 +219,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result
         let _ = tx0.send(res);
     });
 
-    // we'll poll `rx` in the main loop to pick up the result
+    // we'll poll `rx` and `crx` in the main loop to pick up results
 
     loop {
         // check for background post load completion
@@ -223,6 +228,15 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result
             match res {
                 Ok(posts) => { app.posts = posts; app.list_selected = 0; app.messages.push(format!("Loaded {} posts", app.posts.len())); }
                 Err(e) => { app.messages.push(format!("Failed to load posts: {}", e)); }
+            }
+        }
+
+        // check for background comment load completion
+        if let Ok(res) = crx.try_recv() {
+            app.loading_comments = false;
+            match res {
+                Ok(comments) => { app.comments = comments; app.expanded.clear(); app.build_focus_items(); app.messages.push(format!("Loaded {} comments", app.comments.len())); }
+                Err(e) => { app.messages.push(format!("Failed to load comments: {}", e)); }
             }
         }
         terminal.draw(|f| {
@@ -299,6 +313,18 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result
                         state.select(Some(app.focus_selected));
                     }
                     f.render_stateful_widget(comments, right_chunks[2], &mut state);
+
+                    // Loading overlay for comments
+                    if app.loading_comments {
+                        let carea = right_chunks[2];
+                        let width = std::cmp::min(40u16, carea.width.saturating_sub(10));
+                        let x = carea.x + (carea.width.saturating_sub(width)) / 2;
+                        let y = carea.y + (carea.height / 2).saturating_sub(1);
+                        let popup = Rect::new(x, y, width, 3);
+                        f.render_widget(Clear, popup);
+                        let p = Paragraph::new("Loading comments...").block(Block::default().borders(Borders::ALL).title("Loading"));
+                        f.render_widget(p, popup);
+                    }
                 } else {
                     let p = Paragraph::new("No post focused").block(Block::default().borders(Borders::ALL).title("Post"));
                     f.render_widget(p, right);
@@ -418,7 +444,18 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result
                         }
                         KeyCode::Char('l') | KeyCode::Char('L') => {
                             if app.view == View::Focus {
-                                app.load_comments();
+                                if let Some(p) = &app.focused {
+                                    let url = format!("https://www.reddit.com{}.json", p.perma_link);
+                                    app.loading_comments = true;
+                                    app.comments.clear();
+                                    app.focus_items.clear();
+                                    let ctx2 = ctx.clone();
+                                    let rt2 = app.rt.clone();
+                                    thread::spawn(move || {
+                                        let res = rt2.block_on(Comment::get_comments(&url));
+                                        let _ = ctx2.send(res);
+                                    });
+                                }
                             }
                         }
                         KeyCode::Esc => {
