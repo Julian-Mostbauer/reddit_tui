@@ -13,6 +13,8 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, Borders, Paragraph, Clear};
 use ratatui::Terminal;
 
+use crate::reddit_api::model::Post;
+
 struct App {
     command_mode: bool,
     input: String,

@@ -34,15 +34,28 @@ pub struct Post {
 
 impl Post {
     pub async fn get_posts(post_collection_url: &str) -> Vec<Post> {
-        // support local files (e.g. "src/reddit_api/json_examples/post_listing_with_two_posts.json")
-        // or file:// URIs
-        let path = if let Some(p) = post_collection_url.strip_prefix("file://") {
-            p
+        // support local files (e.g. "src/reddit_api/json_examples/post_listing_with_two_posts.json"), file:// URIs,
+        // or http(s) URLs like "https://www.reddit.com/.json"
+        let content = if post_collection_url.starts_with("http://")
+            || post_collection_url.starts_with("https://")
+        {
+            // fetch over HTTP
+            match reqwest::get(post_collection_url).await {
+                Ok(resp) => match resp.text().await {
+                    Ok(t) => t,
+                    Err(_) => return Vec::new(),
+                },
+                Err(_) => return Vec::new(),
+            }
         } else {
-            post_collection_url
+            let path = if let Some(p) = post_collection_url.strip_prefix("file://") {
+                p
+            } else {
+                post_collection_url
+            };
+            std::fs::read_to_string(path).unwrap_or_default()
         };
 
-        let content = std::fs::read_to_string(path).unwrap_or_default();
         let json: Value = match serde_json::from_str(&content) {
             Ok(v) => v,
             Err(_) => return Vec::new(),
@@ -168,13 +181,25 @@ pub struct Comment {
 impl Comment {
     pub fn get_comments(post_url: &str) -> Vec<Comment> {
         // support local files (e.g. "src/reddit_api/json_examples/post_with_one_comment.json")
-        let path = if let Some(p) = post_url.strip_prefix("file://") {
-            p
+        // or http(s) urls
+        let content = if post_url.starts_with("http://") || post_url.starts_with("https://") {
+            // blocking request using reqwest::blocking
+            match reqwest::blocking::get(post_url) {
+                Ok(resp) => match resp.text() {
+                    Ok(t) => t,
+                    Err(_) => return Vec::new(),
+                },
+                Err(_) => return Vec::new(),
+            }
         } else {
-            post_url
+            let path = if let Some(p) = post_url.strip_prefix("file://") {
+                p
+            } else {
+                post_url
+            };
+            std::fs::read_to_string(path).unwrap_or_default()
         };
 
-        let content = std::fs::read_to_string(path).unwrap_or_default();
         let json: Value = match serde_json::from_str(&content) {
             Ok(v) => v,
             Err(_) => return Vec::new(),
@@ -256,9 +281,10 @@ fn parse_comment(v: &Value) -> Option<Comment> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read, Write};
 
     #[tokio::test]
-    async fn test_get_posts_from_local_file() {
+    async fn test_get_posts_from_file() {
         let posts =
             Post::get_posts("src/reddit_api/json_examples/post_listing_with_two_posts.json").await;
 
@@ -274,11 +300,50 @@ mod tests {
         let p1 = &posts[1];
         assert_eq!(p1.subreddit, "YNNews");
         assert!(p1.media_url.is_some());
-        // dbg!(posts);
+    }
+
+    #[tokio::test]
+    async fn test_get_posts_over_http() {
+        // Start a tiny local HTTP server (single-request) and serve the example JSON over HTTP
+        let file = std::fs::read_to_string(
+            "src/reddit_api/json_examples/post_listing_with_two_posts.json",
+        )
+        .unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf);
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                    file.len(),
+                    file
+                );
+                let _ = stream.write(response.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+
+        let url = format!("http://{}/posts.json", addr);
+        let posts = Post::get_posts(&url).await;
+
+        // Expect two posts in the example
+        assert_eq!(posts.len(), 2);
+
+        let p0 = &posts[0];
+        // check that some key fields parsed correctly
+        assert!(p0.title.len() > 0);
+        assert_eq!(p0.subreddit, "AskReddit");
+        assert!(p0.num_comments > 0);
+
+        let p1 = &posts[1];
+        assert_eq!(p1.subreddit, "YNNews");
+        assert!(p1.media_url.is_some());
     }
 
     #[test]
-    fn test_get_comments_from_local_file() {
+    fn test_get_comments_from_file() {
         let comments =
             Comment::get_comments("src/reddit_api/json_examples/post_with_one_comment.json");
         assert!(!comments.is_empty());
@@ -291,6 +356,49 @@ mod tests {
         if !c0.replies.is_empty() {
             assert!(c0.replies[0].body.len() > 0);
         }
-        dbg!(comments);
+    }
+
+    #[test]
+    fn test_get_comments_over_http() {
+        // start a tiny local HTTP server and serve the example json
+        let file =
+            std::fs::read_to_string("src/reddit_api/json_examples/post_with_one_comment.json")
+                .unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf);
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                    file.len(),
+                    file
+                );
+                let _ = stream.write(response.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+
+        let url = format!("http://{}/comments.json", addr);
+        let comments = Comment::get_comments(&url);
+
+        assert!(!comments.is_empty());
+
+        let c0 = &comments[0];
+        assert!(c0.body.len() > 0);
+        assert!(c0.author.len() > 0);
+
+        // ensure nested replies are parsed (if present in the example)
+        if !c0.replies.is_empty() {
+            assert!(c0.replies[0].body.len() > 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_reddit_home_page() {
+        let p = Post::get_posts("https://www.reddit.com/.json").await;
+        assert!(p.len() > 0); // test if any posts could be parsed
+        dbg!(p);
     }
 }
