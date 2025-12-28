@@ -1,3 +1,5 @@
+mod reddit_api;
+
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::time::Duration;
@@ -26,18 +28,23 @@ impl App {
         }
     }
 
-    fn submit_command(&mut self) {
+    fn submit_command(&mut self) -> bool {
         let cmd = self.input.trim();
+        // Special-case: 'q' command quits the application
+        if cmd == "q" {
+            return true;
+        }
         if !cmd.is_empty() {
             // Log to file
             if let Err(e) = log_command(cmd) {
                 self.messages.push(format!("Failed to log command: {}", e));
             } else {
-                self.messages.push(cmd.to_owned());
+                self.messages.push(format!(":{}", cmd));
             }
         }
         self.input.clear();
         self.command_mode = false;
+        false
     }
 }
 
@@ -134,7 +141,9 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result
                         app.input.clear();
                     }
                     (KeyCode::Enter, true) => {
-                        app.submit_command();
+                        if app.submit_command() {
+                            break;
+                        }
                     }
                     // allow quitting with 'q' when not in command mode
                     (KeyCode::Char('q'), false) => break,
