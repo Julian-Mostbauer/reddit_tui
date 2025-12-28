@@ -12,7 +12,7 @@ use crossterm::execute;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Clear};
+use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Clear, Wrap};
 use ratatui::Terminal;
 
 use crate::reddit_api::model::{Comment, Post, FetchError};
@@ -171,6 +171,22 @@ impl App {
     }
 }
 
+// Rough calculation of wrapped lines for a text given a width in cells.
+// This is an approximation using character counts (doesn't handle wide/unicode widths perfectly)
+fn wrapped_lines(text: &str, width: u16) -> u16 {
+    if width == 0 { return 1; }
+    let mut lines: u16 = 0;
+    for ln in text.lines() {
+        let len = ln.chars().count() as u16;
+        if len == 0 {
+            lines = lines.saturating_add(1);
+        } else {
+            lines = lines.saturating_add((len + width - 1) / width);
+        }
+    }
+    if lines == 0 { 1 } else { lines }
+}
+
 fn log_command(cmd: &str) -> std::io::Result<()> {
     let mut f = OpenOptions::new()
         .create(true)
@@ -278,15 +294,8 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result
                 f.render_widget(p, right);
             } else {
                 // Focus view: title, body (media + text), comments
-                let right_chunks = Layout::default().direction(Direction::Vertical).constraints([Constraint::Length(3), Constraint::Length(6), Constraint::Min(1)]).split(right);
                 if let Some(pst) = &app.focused {
-                    // title
-                    let vote_pct = pst.upvote_ratio * 100.0;
-                    let title = Paragraph::new(format!("{}", pst.title))
-                        .block(Block::default().borders(Borders::ALL).title(format!("Post — /r/{} — {} upvotes ({:.0}% upvoted) — {} comments", pst.subreddit, pst.score, vote_pct, pst.num_comments)));
-                    f.render_widget(title, right_chunks[0]);
-
-                    // body area (selftext + media link)
+                    // Build body text first so we can compute heights dynamically
                     let mut body = String::new();
                     if let Some(selftext) = &pst.selftext {
                         if !selftext.is_empty() {
@@ -300,7 +309,28 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result
                     if body.is_empty() {
                         body = "(no body)".to_string();
                     }
-                    let body_p = Paragraph::new(body).block(Block::default().borders(Borders::ALL).title("Body"));
+
+                    // Compute available inner width (account for borders)
+                    let inner_w = right.width.saturating_sub(2);
+                    // compute how many wrapped lines the title/body need
+                    let title_lines = wrapped_lines(&pst.title, inner_w).clamp(1, 8);
+                    let title_height = title_lines.saturating_add(2); // add border space
+                    // body should be at least 3 lines but no more than available space after reserving title
+                    let max_body_inner = right.height.saturating_sub(title_height + 3).max(1);
+                    let body_inner_lines = wrapped_lines(&body, inner_w).clamp(3, max_body_inner);
+                    let body_height = body_inner_lines.saturating_add(2); // add border space
+
+                    let right_chunks = Layout::default().direction(Direction::Vertical).constraints([Constraint::Length(title_height), Constraint::Length(body_height), Constraint::Min(1)]).split(right);
+
+                    // title
+                    let vote_pct = pst.upvote_ratio * 100.0;
+                    let title = Paragraph::new(pst.title.clone())
+                        .wrap(Wrap { trim: true })
+                        .block(Block::default().borders(Borders::ALL).title(format!("Post — /r/{} — {} upvotes ({:.0}% upvoted) — {} comments", pst.subreddit, pst.score, vote_pct, pst.num_comments)));
+                    f.render_widget(title, right_chunks[0]);
+
+                    // body area (selftext + media link)
+                    let body_p = Paragraph::new(body).wrap(Wrap { trim: true }).block(Block::default().borders(Borders::ALL).title("Body"));
                     f.render_widget(body_p, right_chunks[1]);
 
                     // comments area
