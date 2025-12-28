@@ -105,7 +105,8 @@ impl Post {
                     .or_else(|| data.get("url"))
                     .and_then(|v| v.as_str())
                     .and_then(|s| {
-                        if s.is_empty() || s == "self" {
+                        // Ignore empty/self URLs, and also ignore reddit comment/permalink URLs which are not media
+                        if s.is_empty() || s == "self" || s.contains("/comments/") {
                             None
                         } else {
                             Some(s.to_string())
@@ -314,6 +315,8 @@ mod tests {
         assert!(p0.title.len() > 0);
         assert_eq!(p0.subreddit, "AskReddit");
         assert!(p0.num_comments > 0);
+        // this sample is a self post and should not have a media URL
+        assert!(p0.media_url.is_none());
 
         let p1 = &posts[1];
         assert_eq!(p1.subreddit, "YNNews");

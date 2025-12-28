@@ -327,7 +327,6 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result
                     match key.code {
                         KeyCode::Char('c') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => break,
                         KeyCode::Char(':') => { app.command_mode = true; app.input.clear(); }
-                        KeyCode::Char('q') => break,
                         KeyCode::Up => {
                             if app.view == View::List {
                                 if app.list_selected > 0 { app.list_selected -= 1; }
