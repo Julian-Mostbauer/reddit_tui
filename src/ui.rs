@@ -222,10 +222,15 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result
 
             // Left: Post list view
             let list_block = Block::default().borders(Borders::ALL).title("Posts (press ':' to load subreddit, Enter to open)");
+            // Render each post as a compact two-line item: title on first line, small meta on second line
             let items: Vec<ListItem> = app
                 .posts
                 .iter()
-                .map(|p| ListItem::new(format!("{} - /r/{}", p.title, p.subreddit)))
+                .map(|p| {
+                    let meta = format!("↑ {} ↓   • {} comments  • /r/{}", p.score, p.num_comments, p.subreddit);
+                    let text = format!("{}\n{}", p.title, meta);
+                    ListItem::new(text)
+                })
                 .collect();
             let mut list_state = ratatui::widgets::ListState::default();
             if !app.posts.is_empty() {
