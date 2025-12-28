@@ -248,8 +248,9 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result
                 let right_chunks = Layout::default().direction(Direction::Vertical).constraints([Constraint::Length(3), Constraint::Length(6), Constraint::Min(1)]).split(right);
                 if let Some(pst) = &app.focused {
                     // title
+                    let vote_pct = pst.upvote_ratio * 100.0;
                     let title = Paragraph::new(format!("{}", pst.title))
-                        .block(Block::default().borders(Borders::ALL).title(format!("Post — /r/{} ({} comments)", pst.subreddit, pst.num_comments)));
+                        .block(Block::default().borders(Borders::ALL).title(format!("Post — /r/{} — {} upvotes ({:.0}% upvoted) — {} comments", pst.subreddit, pst.score, vote_pct, pst.num_comments)));
                     f.render_widget(title, right_chunks[0]);
 
                     // body area (selftext + media link)
