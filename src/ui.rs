@@ -258,10 +258,11 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result
         terminal.draw(|f| {
             let area = f.area();
 
-            // Layout: left list (30%), right main (70%)
+            // Layout: left list vs right main. Give the list more space when no post is open
+            let left_pct = if app.view == View::List { 65 } else { 35 };
             let chunks = Layout::default()
                 .direction(Direction::Horizontal)
-                .constraints([Constraint::Percentage(35), Constraint::Percentage(65)])
+                .constraints([Constraint::Percentage(left_pct), Constraint::Percentage(100 - left_pct)])
                 .split(area);
 
             // Left: Post list view
@@ -313,7 +314,9 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result
                     // Compute available inner width (account for borders)
                     let inner_w = right.width.saturating_sub(2);
                     // compute how many wrapped lines the title/body need
-                    let title_lines = wrapped_lines(&pst.title, inner_w).clamp(1, 8);
+                    // allow the title to take up to half the right pane height so long titles can wrap
+                    let max_title_inner = (right.height.saturating_sub(4) / 2).max(1);
+                    let title_lines = wrapped_lines(&pst.title, inner_w).clamp(1, max_title_inner);
                     let title_height = title_lines.saturating_add(2); // add border space
                     // body should be at least 3 lines but no more than available space after reserving title
                     let max_body_inner = right.height.saturating_sub(title_height + 3).max(1);
