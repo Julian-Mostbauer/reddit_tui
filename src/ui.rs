@@ -56,6 +56,10 @@ struct App {
     // state for background loading
     loading_posts: bool,
     loading_comments: bool,
+
+    // short-lived popup message (cleared automatically after a few frames)
+    flash_message: Option<String>,
+    flash_ttl: u8,
 }
 
 impl App {
@@ -75,6 +79,8 @@ impl App {
             rt,
             loading_posts: false,
             loading_comments: false,
+            flash_message: None,
+            flash_ttl: 0,
         }
     }
 
@@ -138,6 +144,45 @@ impl App {
                     self.messages.push(format!("Failed to load comments: {}", e));
                 }
             }
+        }
+    }
+
+    /// Toggle expand/collapse or select the currently-focused item in the focus view.
+    fn toggle_selected(&mut self) {
+        if self.focus_items.is_empty() { return; }
+        let idx = self.focus_selected;
+        if idx >= self.focus_items.len() { return; }
+        let path = self.focus_items[idx].path.clone();
+        let has_children = self.focus_items[idx].has_children;
+        if has_children {
+            if self.expanded.contains(&path) {
+                self.expanded.remove(&path);
+            } else {
+                self.expanded.insert(path.clone());
+            }
+            // remember selected path and rebuild items
+            let selected_path = path.clone();
+            self.build_focus_items();
+            // if expansion resulted in no visible child nodes, undo and show a flash
+            let child_prefix = format!("{}.", selected_path);
+            let has_visible_child = self.focus_items.iter().any(|it| it.path.starts_with(&child_prefix));
+            if !has_visible_child {
+                // undo expansion
+                self.expanded.remove(&selected_path);
+                self.build_focus_items();
+                self.flash_message = Some("No visible replies to expand".to_string());
+                self.flash_ttl = 30;
+            }
+            // re-select the same item if present
+            if let Some(pos) = self.focus_items.iter().position(|it| it.path == selected_path) {
+                self.focus_selected = pos;
+            } else {
+                self.focus_selected = 0;
+            }
+        } else {
+            // leaf comment: show full comment body in messages
+            let text = self.focus_items[idx].body.clone();
+            self.messages.push(format!("Comment selected: {}", text));
         }
     }
 
@@ -521,36 +566,8 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result
                             if app.view == View::List {
                                 app.open_focused();
                             } else {
-                                // if not post (i.e., a comment), toggle expand/collapse when applicable
-                                if app.focus_selected == 0 {
-                                    // nothing for the post
-                                } else {
-                                    let idx = app.focus_selected;
-                                    if idx < app.focus_items.len() {
-                                        let path = app.focus_items[idx].path.clone();
-                                        let has_children = app.focus_items[idx].has_children;
-                                        if has_children {
-                                            if app.expanded.contains(&path) {
-                                                app.expanded.remove(&path);
-                                            } else {
-                                                app.expanded.insert(path.clone());
-                                            }
-                                            // remember selected path and rebuild items
-                                            let selected_path = path.clone();
-                                            app.build_focus_items();
-                                            // re-select the same item if present
-                                            if let Some(pos) = app.focus_items.iter().position(|it| it.path == selected_path) {
-                                                app.focus_selected = pos;
-                                            } else {
-                                                app.focus_selected = 0;
-                                            }
-                                        } else {
-                                            // leaf comment: show full comment body in messages
-                                            let text = app.focus_items[idx].body.clone();
-                                            app.messages.push(format!("Comment selected: {}", text));
-                                        }
-                                    }
-                                }
+                                // Toggle expand/collapse or select the current focused comment
+                                app.toggle_selected();
                             }
                         }
                         KeyCode::Char('l') | KeyCode::Char('L') => {
@@ -582,4 +599,32 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result
     }
 
     Ok(())
+}
+
+// Tests for UI behaviors
+#[cfg(test)]
+mod ui_tests {
+    use super::*;
+    use crate::reddit_api::model::Comment;
+    use std::sync::Arc;
+
+    #[test]
+    fn test_toggle_selected_top_comment() {
+        let rt = Arc::new(tokio::runtime::Runtime::new().unwrap());
+        let mut app = App::new(rt);
+
+        let child = Comment { body: "child".to_string(), replies: vec![], score: 1, author: "a".to_string(), permalink: "".to_string() };
+        let parent = Comment { body: "parent".to_string(), replies: vec![child], score: 2, author: "b".to_string(), permalink: "".to_string() };
+        app.comments = vec![parent];
+
+        app.build_focus_items();
+        assert!(!app.focus_items.is_empty());
+        assert!(app.focus_items[0].has_children);
+
+        app.focus_selected = 0;
+        app.toggle_selected();
+
+        assert!(app.expanded.contains("0"));
+        assert!(app.focus_items.iter().any(|it| it.path.starts_with("0.")));
+    }
 }
