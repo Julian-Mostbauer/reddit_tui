@@ -17,6 +17,28 @@ data: {
 */
 
 use serde_json::Value;
+use std::fmt;
+
+#[derive(Debug)]
+pub enum FetchError {
+    Io(std::io::Error),
+    Http(reqwest::Error),
+    Status(u16),
+    Parse(String),
+}
+
+impl fmt::Display for FetchError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            FetchError::Io(e) => write!(f, "IO error: {}", e),
+            FetchError::Http(e) => write!(f, "HTTP error: {}", e),
+            FetchError::Status(code) => write!(f, "HTTP status error: {}", code),
+            FetchError::Parse(s) => write!(f, "Parse error: {}", s),
+        }
+    }
+}
+
+impl std::error::Error for FetchError {}
 
 #[derive(Debug)]
 pub struct Post {
@@ -33,33 +55,32 @@ pub struct Post {
 }
 
 impl Post {
-    pub async fn get_posts(post_collection_url: &str) -> Vec<Post> {
+    pub async fn get_posts(post_collection_url: &str) -> Result<Vec<Post>, FetchError> {
         // support local files (e.g. "src/reddit_api/json_examples/post_listing_with_two_posts.json"), file:// URIs,
         // or http(s) URLs like "https://www.reddit.com/.json"
         let content = if post_collection_url.starts_with("http://")
             || post_collection_url.starts_with("https://")
         {
-            // fetch over HTTP
-            match reqwest::get(post_collection_url).await {
-                Ok(resp) => match resp.text().await {
-                    Ok(t) => t,
-                    Err(_) => return Vec::new(),
-                },
-                Err(_) => return Vec::new(),
+            // fetch over HTTP with a User-Agent (reddit rejects empty/default agents)
+            let client = reqwest::Client::builder()
+                .user_agent("reddit_tui/0.1")
+                .build()
+                .map_err(FetchError::Http)?;
+            let resp = client.get(post_collection_url).send().await.map_err(FetchError::Http)?;
+            if !resp.status().is_success() {
+                return Err(FetchError::Status(resp.status().as_u16()));
             }
+            resp.text().await.map_err(FetchError::Http)?
         } else {
             let path = if let Some(p) = post_collection_url.strip_prefix("file://") {
                 p
             } else {
                 post_collection_url
             };
-            std::fs::read_to_string(path).unwrap_or_default()
+            std::fs::read_to_string(path).map_err(FetchError::Io)?
         };
 
-        let json: Value = match serde_json::from_str(&content) {
-            Ok(v) => v,
-            Err(_) => return Vec::new(),
-        };
+        let json: Value = serde_json::from_str(&content).map_err(|e| FetchError::Parse(e.to_string()))?;
 
         let mut out = Vec::new();
 
@@ -137,7 +158,7 @@ impl Post {
             }
         }
 
-        out
+        Ok(out)
     }
 }
 
@@ -179,31 +200,29 @@ pub struct Comment {
 }
 
 impl Comment {
-    pub fn get_comments(post_url: &str) -> Vec<Comment> {
+    pub async fn get_comments(post_url: &str) -> Result<Vec<Comment>, FetchError> {
         // support local files (e.g. "src/reddit_api/json_examples/post_with_one_comment.json")
-        // or http(s) urls
+        // or http(s) urls (async HTTP using reqwest with a User-Agent)
         let content = if post_url.starts_with("http://") || post_url.starts_with("https://") {
-            // blocking request using reqwest::blocking
-            match reqwest::blocking::get(post_url) {
-                Ok(resp) => match resp.text() {
-                    Ok(t) => t,
-                    Err(_) => return Vec::new(),
-                },
-                Err(_) => return Vec::new(),
+            let client = reqwest::Client::builder()
+                .user_agent("reddit_tui/0.1")
+                .build()
+                .map_err(FetchError::Http)?;
+            let resp = client.get(post_url).send().await.map_err(FetchError::Http)?;
+            if !resp.status().is_success() {
+                return Err(FetchError::Status(resp.status().as_u16()));
             }
+            resp.text().await.map_err(FetchError::Http)?
         } else {
             let path = if let Some(p) = post_url.strip_prefix("file://") {
                 p
             } else {
                 post_url
             };
-            std::fs::read_to_string(path).unwrap_or_default()
+            std::fs::read_to_string(path).map_err(FetchError::Io)?
         };
 
-        let json: Value = match serde_json::from_str(&content) {
-            Ok(v) => v,
-            Err(_) => return Vec::new(),
-        };
+        let json: Value = serde_json::from_str(&content).map_err(|e| FetchError::Parse(e.to_string()))?;
 
         // The expected structure is an array where the second element contains comments
         let mut out = Vec::new();
@@ -221,7 +240,7 @@ impl Comment {
             }
         }
 
-        out
+        Ok(out)
     }
 }
 
@@ -285,8 +304,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_posts_from_file() {
-        let posts =
-            Post::get_posts("src/reddit_api/json_examples/post_listing_with_two_posts.json").await;
+        let posts = Post::get_posts("src/reddit_api/json_examples/post_listing_with_two_posts.json").await.expect("get_posts failed");
 
         // Expect two posts in the example
         assert_eq!(posts.len(), 2);
@@ -326,7 +344,7 @@ mod tests {
         });
 
         let url = format!("http://{}/posts.json", addr);
-        let posts = Post::get_posts(&url).await;
+        let posts = Post::get_posts(&url).await.expect("get_posts http failed");
 
         // Expect two posts in the example
         assert_eq!(posts.len(), 2);
@@ -342,10 +360,9 @@ mod tests {
         assert!(p1.media_url.is_some());
     }
 
-    #[test]
-    fn test_get_comments_from_file() {
-        let comments =
-            Comment::get_comments("src/reddit_api/json_examples/post_with_one_comment.json");
+    #[tokio::test]
+    async fn test_get_comments_from_file() {
+        let comments = Comment::get_comments("src/reddit_api/json_examples/post_with_one_comment.json").await.expect("get_comments failed");
         assert!(!comments.is_empty());
 
         let c0 = &comments[0];
@@ -358,8 +375,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_get_comments_over_http() {
+    #[tokio::test]
+    async fn test_get_comments_over_http() {
         // start a tiny local HTTP server and serve the example json
         let file =
             std::fs::read_to_string("src/reddit_api/json_examples/post_with_one_comment.json")
@@ -381,7 +398,7 @@ mod tests {
         });
 
         let url = format!("http://{}/comments.json", addr);
-        let comments = Comment::get_comments(&url);
+        let comments = Comment::get_comments(&url).await.expect("get_comments http failed");
 
         assert!(!comments.is_empty());
 
@@ -397,8 +414,123 @@ mod tests {
 
     #[tokio::test]
     async fn test_reddit_home_page() {
-        let p = Post::get_posts("https://www.reddit.com/.json").await;
-        assert!(p.len() > 0); // test if any posts could be parsed
+        // Optional live integration test. Enable by setting `REDDIT_TEST=1` in the environment.
+        if std::env::var("REDDIT_TEST").is_err() {
+            eprintln!("Skipping live reddit test (set REDDIT_TEST=1 to enable)");
+            return;
+        }
+
+        let p = Post::get_posts("https://www.reddit.com/.json").await.expect("get_posts failed");
+        assert!(!p.is_empty(), "expected to parse at least one post from Reddit");
         dbg!(p);
+    }
+
+    // Failure-mode tests
+    #[tokio::test]
+    async fn test_get_posts_missing_file_returns_io_error() {
+        let res = Post::get_posts("nonexistent_file_hopefully_missing.json").await;
+        match res {
+            Err(FetchError::Io(_)) => {}
+            other => panic!("expected Io error, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_posts_http_404_returns_status_error() {
+        // serve an HTTP 404 response
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let _ = stream.read(&mut [0u8; 1024]);
+                let response = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
+                let _ = stream.write(response.as_bytes());
+            }
+        });
+
+        let url = format!("http://{}/no.json", addr);
+        let res = Post::get_posts(&url).await;
+        match res {
+            Err(FetchError::Status(code)) if code == 404 => {}
+            other => panic!("expected Status(404), got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_posts_http_invalid_data_returns_parse_error() {
+        // serve a 200 with invalid JSON
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let _ = stream.read(&mut [0u8; 1024]);
+                let body = "this is not json";
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}",
+                    body.len(), body
+                );
+                let _ = stream.write(response.as_bytes());
+            }
+        });
+
+        let url = format!("http://{}/invalid.json", addr);
+        let res = Post::get_posts(&url).await;
+        match res {
+            Err(FetchError::Parse(_)) => {}
+            other => panic!("expected Parse error, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_comments_missing_file_returns_io_error() {
+        let res = Comment::get_comments("nonexistent_comments_file.json").await;
+        match res {
+            Err(FetchError::Io(_)) => {}
+            other => panic!("expected Io error, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_comments_http_404_returns_status_error() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let _ = stream.read(&mut [0u8; 1024]);
+                let response = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
+                let _ = stream.write(response.as_bytes());
+            }
+        });
+
+        let url = format!("http://{}/no_comments.json", addr);
+        let res = Comment::get_comments(&url).await;
+        match res {
+            Err(FetchError::Status(code)) if code == 404 => {}
+            other => panic!("expected Status(404), got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_comments_http_invalid_data_returns_parse_error() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let _ = stream.read(&mut [0u8; 1024]);
+                let body = "not json";
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}",
+                    body.len(), body
+                );
+                let _ = stream.write(response.as_bytes());
+            }
+        });
+
+        let url = format!("http://{}/invalid_comments.json", addr);
+        let res = Comment::get_comments(&url).await;
+        match res {
+            Err(FetchError::Parse(_)) => {}
+            other => panic!("expected Parse error, got {:?}", other),
+        }
     }
 }
