@@ -143,8 +143,12 @@ pub fn open_in_browser(url: &str) -> std::io::Result<()> {
 
     use std::process::{Command, Stdio};
     if cfg!(target_os = "linux") {
-        Command::new("xdg-open")
-            .arg(url)
+        // Use shell + nohup + background to fully detach so the helper process doesn't linger
+        let safe_url = url.replace('"', "\"");
+        Command::new("sh")
+            .arg("-c")
+            .arg(format!("nohup xdg-open \"{}\" >/dev/null 2>&1 &", safe_url))
+            .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
