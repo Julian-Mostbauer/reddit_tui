@@ -1,5 +1,5 @@
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Constraint, Direction, Layout, Rect, Alignment};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 
@@ -208,19 +208,32 @@ pub fn draw_frame(f: &mut Frame, app: &mut App) {
             width = area.width;
         }
         let x = area.x + (area.width.saturating_sub(width)) / 2;
-        let y = area.y + area.height.saturating_sub(4);
-        let cmd_area = Rect::new(x, y, width, 3);
+        // increase height by 1 to show help line under the input
+        let y = area.y + area.height.saturating_sub(5);
+        let cmd_area = Rect::new(x, y, width, 4);
 
         // Clear background under popup
         f.render_widget(Clear, cmd_area);
 
+        // top area: the command input with a border
         let cmd_text = format!(":{}", app.input);
         let style = Style::default()
             .fg(Color::Yellow)
             .add_modifier(Modifier::BOLD);
-        let cmd =
-            Paragraph::new(cmd_text).block(Block::default().borders(Borders::ALL).title("Command"));
-        f.render_widget(cmd.style(style), cmd_area);
+        let cmd = Paragraph::new(cmd_text).block(Block::default().borders(Borders::ALL).title("Command"));
+        // render it into the upper 3 rows of the popup (leaving one row for help)
+        let input_rect = Rect::new(x, y, width, 3);
+        f.render_widget(cmd.style(style), input_rect);
+
+        // help line below the input (dimmed) — center horizontally under the command box
+        let help_text = "Commands: goto <subreddit>, search <query>, home, q";
+        let help_w = std::cmp::min(width.saturating_sub(4), help_text.len() as u16 + 2);
+        let hx = x + (width.saturating_sub(help_w)) / 2;
+        let help_rect = Rect::new(hx, y + 3, help_w, 1);
+        let help = Paragraph::new(help_text)
+            .style(Style::default().fg(Color::Gray))
+            .alignment(Alignment::Center);
+        f.render_widget(help, help_rect);
     }
 
     // Loading overlay (shows while posts are being fetched)

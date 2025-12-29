@@ -78,29 +78,60 @@ impl App {
             return (true, None);
         }
 
-        if !cmd.is_empty() {
-            let target = if cmd == "home" || cmd == "/" {
-                "https://www.reddit.com/.json".to_string()
-            } else if cmd.starts_with("r/") {
-                format!("https://www.reddit.com/{}.json", cmd)
-            } else {
-                format!("https://www.reddit.com/r/{}/.json", cmd)
-            };
+        if cmd.is_empty() {
+            self.input.clear();
+            self.command_mode = false;
+            return (false, None);
+        }
 
+        // Parse commands: "home" | "goto <subreddit>" | "search <query>" | legacy forms
+        let mut parts = cmd.splitn(2, char::is_whitespace);
+        let action = parts.next().unwrap_or("");
+        let rest = parts.next().map(|s| s.trim()).unwrap_or("");
+
+        let target = match action {
+            "home" | "/" => Some("https://www.reddit.com/.json".to_string()),
+            "goto" => {
+                if rest.is_empty() {
+                    self.flash_message = Some("Usage: goto <subreddit>".to_string());
+                    self.flash_ttl = 30;
+                    None
+                } else if rest.starts_with("r/") {
+                    // accept either "goto r/name" or "goto name"
+                    Some(format!("https://www.reddit.com/{}.json", rest))
+                } else {
+                    Some(format!("https://www.reddit.com/r/{}/.json", rest))
+                }
+            }
+            "search" => {
+                if rest.is_empty() {
+                    self.flash_message = Some("Usage: search <query>".to_string());
+                    self.flash_ttl = 30;
+                    None
+                } else {
+                    Some(crate::reddit_api::fetch::build_search_url(rest))
+                }
+            }
+            _ => {
+                // Unknown command — we no longer accept bare subreddit or bare r/ forms
+                self.flash_message = Some("Unknown command. Use 'goto <subreddit>' or 'search <query>'".to_string());
+                self.flash_ttl = 30;
+                None
+            }
+        };
+
+        // Only log valid commands that produce a target URL
+        if target.is_some() {
             if let Err(e) = log_command(cmd) {
                 self.messages.push(format!("Failed to log command: {}", e));
             } else {
                 self.messages.push(format!(":{} (loading)", cmd));
             }
-
-            self.input.clear();
-            self.command_mode = false;
-            (false, Some(target))
-        } else {
-            self.input.clear();
-            self.command_mode = false;
-            (false, None)
         }
+
+        self.input.clear();
+        self.command_mode = false;
+        (false, target)
     }
 
     pub fn open_focused(&mut self) {
@@ -253,5 +284,52 @@ mod tests {
 
         assert!(app.expanded.contains("0"));
         assert!(app.focus_items.iter().any(|it| it.path.starts_with("0.")));
+    }
+
+    #[test]
+    fn test_submit_command_variants() {
+        let rt = Arc::new(tokio::runtime::Runtime::new().unwrap());
+        let mut app = App::new(rt.clone());
+
+        // home
+        app.input = "home".to_string();
+        let (quit, target) = app.submit_command();
+        assert!(!quit);
+        assert_eq!(target, Some("https://www.reddit.com/.json".to_string()));
+
+        // goto bare
+        app.input = "goto rust".to_string();
+        let (_, target) = app.submit_command();
+        assert_eq!(target, Some("https://www.reddit.com/r/rust/.json".to_string()));
+
+        // goto with r/ (still works)
+        app.input = "goto r/rust".to_string();
+        let (_, target) = app.submit_command();
+        assert_eq!(target, Some("https://www.reddit.com/r/rust.json".to_string()));
+
+        // search
+        app.input = "search cats".to_string();
+        let (_, target) = app.submit_command();
+        assert_eq!(target, Some(crate::reddit_api::fetch::build_search_url("cats")));
+
+        // legacy r/ syntax is no longer accepted directly — expect no target and a flash message
+        app.input = "r/AskReddit".to_string();
+        let (_, target) = app.submit_command();
+        assert_eq!(target, None);
+        assert!(app.flash_message.is_some());
+        assert!(app.flash_ttl > 0);
+
+        // bare subreddit is no longer accepted directly
+        app.input = "programming".to_string();
+        let (_, target) = app.submit_command();
+        assert_eq!(target, None);
+        assert!(app.flash_message.is_some());
+        assert!(app.flash_ttl > 0);
+
+        // quit
+        app.input = "q".to_string();
+        let (quit, target) = app.submit_command();
+        assert!(quit);
+        assert_eq!(target, None);
     }
 }

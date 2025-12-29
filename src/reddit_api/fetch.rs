@@ -50,6 +50,6 @@ pub fn parse_json(content: &str) -> Result<Value, FetchError> {
     serde_json::from_str(content).map_err(|e| FetchError::Parse(e.to_string()))
 }
 
-pub fn build_search_url(querry: &str) -> String {
-    format!("https://www.reddit.com/search/.json?q=({})", querry)
+pub fn build_search_url(query: &str) -> String {
+    format!("https://www.reddit.com/search/.json?q=({})", query)
 }
