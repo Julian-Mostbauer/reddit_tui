@@ -74,21 +74,51 @@ pub fn wrap_words(text: &str, width: usize) -> Vec<String> {
     out
 }
 
-pub fn log_command(cmd: &str) -> std::io::Result<()> {
+pub fn log_command_to_path(cmd: &str, path: &std::path::Path) -> std::io::Result<()> {
     use std::fs::OpenOptions;
     use std::io::Write;
 
-    let mut f = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("commands.log")?;
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    let mut f = OpenOptions::new().create(true).append(true).open(path)?;
     f.write_all(cmd.as_bytes())?;
     f.write_all(b"\n")?;
     Ok(())
 }
+
+pub fn log_command(cmd: &str) -> std::io::Result<()> {
+    let path = history_file_path();
+    log_command_to_path(cmd, &path)
+}
 /// Load command history from `commands.log` if present. Trims whitespace and ignores empty lines.
-pub fn load_command_history() -> Vec<String> {
-    match std::fs::read_to_string("commands.log") {
+use std::path::PathBuf;
+
+fn history_file_path() -> PathBuf {
+    // Prefer XDG_CONFIG_HOME/reddit_tui/history, fall back to $HOME/.config/reddit_tui/history,
+    // otherwise use ./commands.log as a last resort.
+    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+        let mut p = PathBuf::from(xdg);
+        p.push("reddit_tui");
+        if let Err(_) = std::fs::create_dir_all(&p) {}
+        p.push("history");
+        return p;
+    }
+
+    if let Ok(home) = std::env::var("HOME") {
+        let mut p = PathBuf::from(home);
+        p.push(".config/reddit_tui");
+        if let Err(_) = std::fs::create_dir_all(&p) {}
+        p.push("history");
+        return p;
+    }
+
+    PathBuf::from("commands.log")
+}
+
+pub fn load_command_history_from_path(path: &std::path::Path) -> Vec<String> {
+    match std::fs::read_to_string(path) {
         Ok(s) => s
             .lines()
             .map(|l| l.trim().to_string())
@@ -96,6 +126,11 @@ pub fn load_command_history() -> Vec<String> {
             .collect(),
         Err(_) => Vec::new(),
     }
+}
+
+pub fn load_command_history() -> Vec<String> {
+    let path = history_file_path();
+    load_command_history_from_path(&path)
 }
 
 #[cfg(test)]
@@ -106,15 +141,41 @@ mod tests {
 
     #[test]
     fn test_load_command_history_reads_file() {
-        let mut f = File::create("commands.log").expect("create log");
+        // Prepare an isolated temp path for this test
+        let td = std::env::temp_dir().join(format!("reddit_tui_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&td);
+        std::fs::create_dir_all(&td).unwrap();
+        let path = td.join("history");
+
+        let mut f = File::create(&path).expect("create log");
         writeln!(f, "home").unwrap();
         writeln!(f, "search cats").unwrap();
         writeln!(f, "goto rust").unwrap();
 
-        let h = load_command_history();
+        let h = load_command_history_from_path(&path);
         assert_eq!(h.len(), 3);
         assert_eq!(h[0], "home");
         assert_eq!(h[1], "search cats");
         assert_eq!(h[2], "goto rust");
+
+        let _ = std::fs::remove_dir_all(&td);
+    }
+
+    #[test]
+    fn test_log_command_appends() {
+        // Use an isolated temp path for append test
+        let td = std::env::temp_dir().join(format!("reddit_tui_test_log_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&td);
+        std::fs::create_dir_all(&td).unwrap();
+        let path = td.join("history");
+
+        log_command_to_path("home", &path).unwrap();
+        log_command_to_path("search cats", &path).unwrap();
+        let s = std::fs::read_to_string(&path).unwrap();
+        eprintln!("history path: {:?}", &path);
+        eprintln!("history content:\n{}", &s);
+        assert!(s.contains("home"));
+        assert!(s.contains("search cats"));
+        let _ = std::fs::remove_dir_all(&td);
     }
 }
