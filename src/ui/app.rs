@@ -46,6 +46,10 @@ pub struct App {
     // short-lived popup message (cleared automatically after a few frames)
     pub flash_message: Option<String>,
     pub flash_ttl: u8,
+
+    // command history (for the command bar)
+    pub command_history: Vec<String>,
+    pub history_pos: Option<usize>,
 }
 
 impl App {
@@ -67,6 +71,8 @@ impl App {
             loading_comments: false,
             flash_message: None,
             flash_ttl: 0,
+            command_history: Vec::new(),
+            history_pos: None,
         }
     }
 
@@ -121,12 +127,18 @@ impl App {
         };
 
         // Only log valid commands that produce a target URL
-        if target.is_some() {
+        if let Some(ref t) = target {
             if let Err(e) = log_command(cmd) {
                 self.messages.push(format!("Failed to log command: {}", e));
             } else {
                 self.messages.push(format!(":{} (loading)", cmd));
             }
+
+            // push to history, avoid immediate duplicate
+            if self.command_history.last().map(|s| s != cmd).unwrap_or(true) {
+                self.command_history.push(cmd.to_string());
+            }
+            self.history_pos = None;
         }
 
         self.input.clear();
@@ -246,7 +258,54 @@ impl App {
             self.focus_selected = 0;
         }
     }
+
+    /// Navigate to the previous entry in the command history (older entries)
+    pub fn history_prev(&mut self) {
+        if self.command_history.is_empty() {
+            return;
+        }
+        match self.history_pos {
+            None => {
+                // start from the most recent
+                let idx = self.command_history.len().saturating_sub(1);
+                self.history_pos = Some(idx);
+                self.input = self.command_history[idx].clone();
+            }
+            Some(0) => {
+                self.input = self.command_history[0].clone();
+            }
+            Some(i) => {
+                let new = i.saturating_sub(1);
+                self.history_pos = Some(new);
+                self.input = self.command_history[new].clone();
+            }
+        }
+    }
+
+    /// Navigate to the next entry in the command history (newer entries). If we pass the most recent, clear the input.
+    pub fn history_next(&mut self) {
+        if self.command_history.is_empty() {
+            return;
+        }
+        match self.history_pos {
+            None => {
+                // nothing to do
+            }
+            Some(i) => {
+                if i + 1 >= self.command_history.len() {
+                    // beyond most recent -> clear selection
+                    self.history_pos = None;
+                    self.input.clear();
+                } else {
+                    let new = i + 1;
+                    self.history_pos = Some(new);
+                    self.input = self.command_history[new].clone();
+                }
+            }
+        }
+    }
 }
+
 
 #[cfg(test)]
 mod tests {
