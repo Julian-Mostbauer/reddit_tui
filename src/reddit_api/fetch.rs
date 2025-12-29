@@ -36,7 +36,11 @@ pub async fn fetch_content(url: &str) -> Result<String, FetchError> {
         }
         resp.text().await.map_err(FetchError::Http)
     } else {
-        let path = if let Some(p) = url.strip_prefix("file://") { p } else { url };
+        let path = if let Some(p) = url.strip_prefix("file://") {
+            p
+        } else {
+            url
+        };
         std::fs::read_to_string(path).map_err(FetchError::Io)
     }
 }
@@ -44,4 +48,8 @@ pub async fn fetch_content(url: &str) -> Result<String, FetchError> {
 /// Convenience: parse a JSON string into a serde_json::Value and map parse errors
 pub fn parse_json(content: &str) -> Result<Value, FetchError> {
     serde_json::from_str(content).map_err(|e| FetchError::Parse(e.to_string()))
+}
+
+pub fn build_search_url(querry: &str) -> String {
+    format!("https://www.reddit.com/search/.json?q=({})", querry)
 }
