@@ -160,7 +160,7 @@ impl App {
             }
             _ => {
                 // Unknown command — we no longer accept bare subreddit or bare r/ forms
-                self.flash_message = Some("Unknown command. Use 'goto <subreddit>' or 'search <query>'".to_string());
+                self.flash_message = Some("Unknown command. Use 'help' for more info".to_string());
                 self.flash_ttl = 30;
                 None
             }
