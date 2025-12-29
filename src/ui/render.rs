@@ -234,6 +234,17 @@ pub fn draw_frame(f: &mut Frame, app: &mut App) {
             .style(Style::default().fg(Color::Gray))
             .alignment(Alignment::Center);
         f.render_widget(help, help_rect);
+
+        // If browsing history, show a right-aligned small indicator like "history 3/10"
+        if let Some(pos) = app.history_pos {
+            let total = app.command_history.len().max(1);
+            let hist_text = format!("history {}/{}", pos + 1, total);
+            let hist_w = (hist_text.len() as u16).saturating_add(2);
+            let hx = x + width.saturating_sub(hist_w).saturating_sub(1);
+            let hist_rect = Rect::new(hx, y + 3, hist_w, 1);
+            let hist = Paragraph::new(hist_text).style(Style::default().fg(Color::Gray)).alignment(Alignment::Right);
+            f.render_widget(hist, hist_rect);
+        }
     }
 
     // Loading overlay (shows while posts are being fetched)

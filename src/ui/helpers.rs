@@ -86,3 +86,35 @@ pub fn log_command(cmd: &str) -> std::io::Result<()> {
     f.write_all(b"\n")?;
     Ok(())
 }
+/// Load command history from `commands.log` if present. Trims whitespace and ignores empty lines.
+pub fn load_command_history() -> Vec<String> {
+    match std::fs::read_to_string("commands.log") {
+        Ok(s) => s
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::File;
+    use std::io::Write;
+
+    #[test]
+    fn test_load_command_history_reads_file() {
+        let mut f = File::create("commands.log").expect("create log");
+        writeln!(f, "home").unwrap();
+        writeln!(f, "search cats").unwrap();
+        writeln!(f, "goto rust").unwrap();
+
+        let h = load_command_history();
+        assert_eq!(h.len(), 3);
+        assert_eq!(h[0], "home");
+        assert_eq!(h[1], "search cats");
+        assert_eq!(h[2], "goto rust");
+    }
+}

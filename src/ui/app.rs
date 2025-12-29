@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use super::helpers::log_command;
+use super::helpers::{log_command, load_command_history};
 use crate::reddit_api::model::{Comment, Post};
 
 #[derive(PartialEq, Eq)]
@@ -54,7 +54,7 @@ pub struct App {
 
 impl App {
     pub fn new(rt: Arc<tokio::runtime::Runtime>) -> Self {
-        App {
+        let mut app = App {
             command_mode: false,
             input: String::new(),
             messages: Vec::new(),
@@ -73,7 +73,12 @@ impl App {
             flash_ttl: 0,
             command_history: Vec::new(),
             history_pos: None,
-        }
+        };
+
+        // Load persisted history (if any)
+        app.command_history = load_command_history();
+
+        app
     }
 
     /// Submit the active command. Returns (quit_flag, optional_target_url).
@@ -127,7 +132,7 @@ impl App {
         };
 
         // Only log valid commands that produce a target URL
-        if let Some(ref t) = target {
+        if let Some(ref _t) = target {
             if let Err(e) = log_command(cmd) {
                 self.messages.push(format!("Failed to log command: {}", e));
             } else {
@@ -138,6 +143,7 @@ impl App {
             if self.command_history.last().map(|s| s != cmd).unwrap_or(true) {
                 self.command_history.push(cmd.to_string());
             }
+            // Persisted via log_command already; reset history position
             self.history_pos = None;
         }
 
