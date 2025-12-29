@@ -138,6 +138,17 @@ pub fn run_app(
                     _ => {}
                 }
             } else {
+                // If help dialog is visible, consume keys and let Esc or 'h' close it
+                if app.show_help {
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Char('h') => {
+                            app.show_help = false;
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
                 match key.code {
                     KeyCode::Char('c')
                         if key

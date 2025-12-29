@@ -1,5 +1,5 @@
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Direction, Layout, Rect, Alignment};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 
@@ -220,13 +220,14 @@ pub fn draw_frame(f: &mut Frame, app: &mut App) {
         let style = Style::default()
             .fg(Color::Yellow)
             .add_modifier(Modifier::BOLD);
-        let cmd = Paragraph::new(cmd_text).block(Block::default().borders(Borders::ALL).title("Command"));
+        let cmd =
+            Paragraph::new(cmd_text).block(Block::default().borders(Borders::ALL).title("Command"));
         // render it into the upper 3 rows of the popup (leaving one row for help)
         let input_rect = Rect::new(x, y, width, 3);
         f.render_widget(cmd.style(style), input_rect);
 
         // help line below the input (dimmed) — center horizontally under the command box
-        let help_text = "Commands: goto <subreddit>, search <query>, home, q";
+        let help_text = "Commands: goto <subreddit>, search <query>, help, home, o, q";
         let help_w = std::cmp::min(width.saturating_sub(4), help_text.len() as u16 + 2);
         let hx = x + (width.saturating_sub(help_w)) / 2;
         let help_rect = Rect::new(hx, y + 3, help_w, 1);
@@ -242,7 +243,9 @@ pub fn draw_frame(f: &mut Frame, app: &mut App) {
             let hist_w = (hist_text.len() as u16).saturating_add(2);
             let hx = x + width.saturating_sub(hist_w).saturating_sub(1);
             let hist_rect = Rect::new(hx, y + 3, hist_w, 1);
-            let hist = Paragraph::new(hist_text).style(Style::default().fg(Color::Gray)).alignment(Alignment::Right);
+            let hist = Paragraph::new(hist_text)
+                .style(Style::default().fg(Color::Gray))
+                .alignment(Alignment::Right);
             f.render_widget(hist, hist_rect);
         }
     }
@@ -269,6 +272,35 @@ pub fn draw_frame(f: &mut Frame, app: &mut App) {
         f.render_widget(Clear, popup);
         let p = Paragraph::new(msg.clone())
             .block(Block::default().borders(Borders::ALL).title("Notice"));
+        f.render_widget(p, popup);
+    }
+
+    // Help popup
+    if app.show_help {
+        let width = std::cmp::min(80u16, area.width.saturating_sub(10));
+        let height = std::cmp::min(14u16, area.height.saturating_sub(6));
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let popup = Rect::new(x, y, width, height);
+        f.render_widget(Clear, popup);
+
+        let help_lines = vec![
+            "Commands:",
+            "  goto <subreddit>   — open subreddit (e.g. 'goto rust' or 'goto r/rust')",
+            "  search <query>     — search reddit for a query",
+            "  open               — open focused post in browser",
+            "  home               — go to reddit home",
+            "  help, ?            — show this help",
+            "  q                  — quit",
+            "",
+            "Navigation: Enter to open post, l to load comments, Up/Down to move",
+            "Press Esc or 'h' to dismiss",
+        ]
+        .join("\n");
+
+        let p = Paragraph::new(help_lines)
+            .wrap(Wrap { trim: true })
+            .block(Block::default().borders(Borders::ALL).title("Help"));
         f.render_widget(p, popup);
     }
 }

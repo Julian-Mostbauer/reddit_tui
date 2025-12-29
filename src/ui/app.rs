@@ -50,6 +50,9 @@ pub struct App {
     // command history (for the command bar)
     pub command_history: Vec<String>,
     pub history_pos: Option<usize>,
+
+    // help popup visible
+    pub show_help: bool,
 }
 
 impl App {
@@ -73,6 +76,7 @@ impl App {
             flash_ttl: 0,
             command_history: Vec::new(),
             history_pos: None,
+            show_help: false,
         };
 
         // Load persisted history (if any)
@@ -148,6 +152,11 @@ impl App {
                     }
                     None
                 }
+            }
+            "help" | "?" => {
+                // show help popup
+                self.show_help = true;
+                None
             }
             _ => {
                 // Unknown command — we no longer accept bare subreddit or bare r/ forms
