@@ -133,6 +133,44 @@ pub fn load_command_history() -> Vec<String> {
     load_command_history_from_path(&path)
 }
 
+/// Open the given URL in the system default browser. On test builds this is a no-op to avoid
+/// launching a browser during unit tests.
+pub fn open_in_browser(url: &str) -> std::io::Result<()> {
+    if cfg!(test) {
+        // In tests, avoid spawning external programs
+        return Ok(());
+    }
+
+    use std::process::{Command, Stdio};
+    if cfg!(target_os = "linux") {
+        Command::new("xdg-open")
+            .arg(url)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map(|_| ())
+    } else if cfg!(target_os = "macos") {
+        Command::new("open")
+            .arg(url)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map(|_| ())
+    } else if cfg!(target_os = "windows") {
+        Command::new("cmd")
+            .arg("/C")
+            .arg("start")
+            .arg("")
+            .arg(url)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map(|_| ())
+    } else {
+        Err(std::io::Error::new(std::io::ErrorKind::Other, "unsupported OS"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

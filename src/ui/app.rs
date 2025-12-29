@@ -123,6 +123,32 @@ impl App {
                     Some(crate::reddit_api::fetch::build_search_url(rest))
                 }
             }
+            "open" => {
+                // open the currently-focused post in the browser
+                if self.focused.is_none() {
+                    self.flash_message = Some("No post focused to open".to_string());
+                    self.flash_ttl = 30;
+                    None
+                } else {
+                    // determine URL to open
+                    let url = format!("https://www.reddit.com{}", self.focused.as_ref().unwrap().perma_link);
+                    match crate::ui::helpers::open_in_browser(&url) {
+                        Ok(()) => {
+                            self.messages.push(format!("Opened {}", url));
+                            // log command and push to history
+                            let _ = log_command(cmd);
+                            if self.command_history.last().map(|s| s != cmd).unwrap_or(true) {
+                                self.command_history.push(cmd.to_string());
+                            }
+                            self.history_pos = None;
+                        }
+                        Err(e) => {
+                            self.messages.push(format!("Failed to open browser: {}", e));
+                        }
+                    }
+                    None
+                }
+            }
             _ => {
                 // Unknown command — we no longer accept bare subreddit or bare r/ forms
                 self.flash_message = Some("Unknown command. Use 'goto <subreddit>' or 'search <query>'".to_string());
