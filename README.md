@@ -2,6 +2,21 @@
 
 This project contains a small terminal UI to browse Reddit.
 
+## Build
+
+> Using Rust 1.92
+
+Rust/Cargo is required to build. Installation guide: https://doc.rust-lang.org/cargo/getting-started/installation.html
+
+Run `cargo build --release` to build the project locally
+
+## Docker
+
+Docker version is missing these features:
+- open post in browser
+- view a posts media locally
+
+If these are important build the project locally
 
 ## Testing
 

@@ -1,0 +1,12 @@
+# Ignore everything
+**
+
+# Except these files/folders
+!Cargo.toml
+!Cargo.lock
+!src/
+!src/**
+!.env
+!.env.example
+!README.md
+!LICENSE
