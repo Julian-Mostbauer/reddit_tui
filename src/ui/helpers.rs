@@ -237,7 +237,7 @@ pub fn view_media(post: &Post, mode: ViewMediaMode) -> Result<(), ViewMediaError
         // generate unique file path
         let mut hasher = DefaultHasher::new();
 
-        post.title.hash(&mut hasher);
+        post.perma_link.hash(&mut hasher);
         let file_path = format!("/tmp/reddit_tui/reddit_media_{}", hasher.finish());
 
         // download file if not already present
