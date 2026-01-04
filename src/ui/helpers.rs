@@ -1,3 +1,6 @@
+use std::fmt::Display;
+use std::hash::{DefaultHasher, Hash, Hasher};
+use std::process::{Command, Stdio};
 // Rough calculation of wrapped lines for a text given a width in cells.
 // This is an approximation using character counts (doesn't handle wide/unicode widths perfectly)
 pub fn wrapped_lines(text: &str, width: u16) -> u16 {
@@ -94,6 +97,10 @@ pub fn log_command(cmd: &str) -> std::io::Result<()> {
 }
 /// Load command history from `commands.log` if present. Trims whitespace and ignores empty lines.
 use std::path::PathBuf;
+use std::time::{self, SystemTime};
+
+use crate::reddit_api::fetch::{create_client, create_client_blocking};
+use crate::reddit_api::model::Post;
 
 fn history_file_path() -> PathBuf {
     // Prefer XDG_CONFIG_HOME/reddit_tui/history, fall back to $HOME/.config/reddit_tui/history,
@@ -141,7 +148,6 @@ pub fn open_in_browser(url: &str) -> std::io::Result<()> {
         return Ok(());
     }
 
-    use std::process::{Command, Stdio};
     if cfg!(target_os = "linux") {
         // Use shell + nohup + background to fully detach so the helper process doesn't linger
         let safe_url = url.replace('"', "\"");
@@ -171,7 +177,114 @@ pub fn open_in_browser(url: &str) -> std::io::Result<()> {
             .spawn()
             .map(|_| ())
     } else {
-        Err(std::io::Error::new(std::io::ErrorKind::Other, "unsupported OS"))
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "unsupported OS",
+        ))
+    }
+}
+
+#[derive(Debug)]
+pub enum ViewMediaError {
+    PostWithoutMedia,
+    UnsupportedOS,
+    DownloadFailure(String),
+    IOError(std::io::Error),
+}
+
+impl std::error::Error for ViewMediaError {}
+
+impl Display for ViewMediaError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ViewMediaError::PostWithoutMedia => {
+                write!(f, "Post does not contain media to view")
+            }
+            ViewMediaError::UnsupportedOS => {
+                write!(f, "Your OS is not supported for viewing media")
+            }
+            ViewMediaError::DownloadFailure(s) => {
+                write!(f, "The post media could not be downloaded: {}", s)
+            }
+            ViewMediaError::IOError(error) => {
+                write!(f, "An I/O error occurred: {}", error)
+            }
+        }
+    }
+}
+pub enum ViewMediaMode {
+    Default,
+    Caca,
+}
+
+pub fn view_media(post: &Post, mode: ViewMediaMode) -> Result<(), ViewMediaError> {
+    if cfg!(test) {
+        // In tests, avoid spawning external programs
+        return Ok(());
+    }
+
+    // only Linux is supported for now
+    if cfg!(target_os = "linux") {
+        let media_url = if let Some(url) = &post.media_url {
+            url
+        } else {
+            return Err(ViewMediaError::PostWithoutMedia);
+        };
+
+        // create temp dir if needed
+        let _ = std::fs::create_dir_all("/tmp/reddit_tui");
+
+        // generate unique file path
+        let mut hasher = DefaultHasher::new();
+
+        post.title.hash(&mut hasher);
+        let file_path = format!("/tmp/reddit_tui/reddit_media_{}", hasher.finish());
+
+        // download file
+        let client = create_client_blocking();
+        let resp = client
+            .get(media_url)
+            .send()
+            .map_err(|e| ViewMediaError::DownloadFailure(e.to_string()))?;
+
+        if !resp.status().is_success() {
+            return Err(ViewMediaError::DownloadFailure(format!(
+                "HTTP status {}",
+                resp.status().as_u16()
+            )));
+        }
+
+        let content = resp
+            .bytes()
+            .map_err(|e| ViewMediaError::DownloadFailure(e.to_string()))?;
+
+        std::fs::write(&file_path, &content).map_err(|e| ViewMediaError::IOError(e))?;
+
+        // view file
+        match mode {
+            ViewMediaMode::Default => Command::new("xdg-open")
+                .arg(&file_path)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .map_err(|e| ViewMediaError::IOError(e))?,
+            ViewMediaMode::Caca => Command::new("sh")
+                .arg("-c")
+                .arg(format!(
+                    "x-terminal-emulator -e cacaview {} >/dev/null 2>&1 &",
+                    file_path
+                ))
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .map_err(|e| ViewMediaError::IOError(e))?,
+        };
+
+        Ok(())
+    } else {
+        Err(ViewMediaError::UnsupportedOS)
     }
 }
 

@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use super::helpers::{log_command, load_command_history};
+use super::helpers::{load_command_history, log_command};
 use crate::reddit_api::model::{Comment, Post};
 
 #[derive(PartialEq, Eq)]
@@ -135,19 +135,62 @@ impl App {
                     None
                 } else {
                     // determine URL to open
-                    let url = format!("https://www.reddit.com{}", self.focused.as_ref().unwrap().perma_link);
+                    let url = format!(
+                        "https://www.reddit.com{}",
+                        self.focused.as_ref().unwrap().perma_link
+                    );
                     match crate::ui::helpers::open_in_browser(&url) {
                         Ok(()) => {
                             self.messages.push(format!("Opened {}", url));
                             // log command and push to history
                             let _ = log_command(cmd);
-                            if self.command_history.last().map(|s| s != cmd).unwrap_or(true) {
+                            if self
+                                .command_history
+                                .last()
+                                .map(|s| s != cmd)
+                                .unwrap_or(true)
+                            {
                                 self.command_history.push(cmd.to_string());
                             }
                             self.history_pos = None;
                         }
                         Err(e) => {
                             self.messages.push(format!("Failed to open browser: {}", e));
+                        }
+                    }
+                    None
+                }
+            }
+            "view" => {
+                if self.focused.is_none() {
+                    self.flash_message = Some("No post in focus.".to_string());
+                    self.flash_ttl = 30;
+                    None
+                } else {
+                    let mode = if rest == "caca" {
+                        crate::ui::helpers::ViewMediaMode::Caca
+                    } else {
+                        crate::ui::helpers::ViewMediaMode::Default
+                    };
+
+                    let post = self.focused.as_ref().unwrap();
+                    match crate::ui::helpers::view_media(post, mode) {
+                        Ok(()) => {
+                            self.messages.push(format!("Viewed {}", post.title));
+                            // log command and push to history
+                            let _ = log_command(cmd);
+                            if self
+                                .command_history
+                                .last()
+                                .map(|s| s != cmd)
+                                .unwrap_or(true)
+                            {
+                                self.command_history.push(cmd.to_string());
+                            }
+                            self.history_pos = None;
+                        }
+                        Err(e) => {
+                            self.messages.push(format!("Failed view media: {}", e));
                         }
                     }
                     None
@@ -175,7 +218,12 @@ impl App {
             }
 
             // push to history, avoid immediate duplicate
-            if self.command_history.last().map(|s| s != cmd).unwrap_or(true) {
+            if self
+                .command_history
+                .last()
+                .map(|s| s != cmd)
+                .unwrap_or(true)
+            {
                 self.command_history.push(cmd.to_string());
             }
             // Persisted via log_command already; reset history position
@@ -347,7 +395,6 @@ impl App {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -400,17 +447,26 @@ mod tests {
         // goto bare
         app.input = "goto rust".to_string();
         let (_, target) = app.submit_command();
-        assert_eq!(target, Some("https://www.reddit.com/r/rust/.json".to_string()));
+        assert_eq!(
+            target,
+            Some("https://www.reddit.com/r/rust/.json".to_string())
+        );
 
         // goto with r/ (still works)
         app.input = "goto r/rust".to_string();
         let (_, target) = app.submit_command();
-        assert_eq!(target, Some("https://www.reddit.com/r/rust.json".to_string()));
+        assert_eq!(
+            target,
+            Some("https://www.reddit.com/r/rust.json".to_string())
+        );
 
         // search
         app.input = "search cats".to_string();
         let (_, target) = app.submit_command();
-        assert_eq!(target, Some(crate::reddit_api::fetch::build_search_url("cats")));
+        assert_eq!(
+            target,
+            Some(crate::reddit_api::fetch::build_search_url("cats"))
+        );
 
         // legacy r/ syntax is no longer accepted directly — expect no target and a flash message
         app.input = "r/AskReddit".to_string();

@@ -133,8 +133,12 @@ pub fn run_app(
                             });
                         }
                     }
-                    KeyCode::Up => { app.history_prev(); }
-                    KeyCode::Down => { app.history_next(); }
+                    KeyCode::Up => {
+                        app.history_prev();
+                    }
+                    KeyCode::Down => {
+                        app.history_next();
+                    }
                     _ => {}
                 }
             } else {

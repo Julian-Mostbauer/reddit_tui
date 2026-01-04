@@ -1,5 +1,5 @@
-use serde_json::Value;
 pub use crate::reddit_api::fetch::FetchError;
+use serde_json::Value;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
@@ -443,21 +443,26 @@ mod tests {
         }
     }
     #[tokio::test]
-    async fn test_get_posts_on_search_result_json(){
-        let posts =
-            Post::get_posts("src/reddit_api/json_examples/search_results.json")
-                .await
-                .expect("get_posts failed");
+    async fn test_get_posts_on_search_result_json() {
+        let posts = Post::get_posts("src/reddit_api/json_examples/search_results.json")
+            .await
+            .expect("get_posts failed");
 
         // Expect two posts in the example
         assert_eq!(posts.len(), 2);
 
         let p0 = &posts[0];
         // check that some key fields parsed correctly
-        assert_eq!(p0.title, "Zelenskyy taking a selfie in Kupiansk city after Russia claimed it was surrounded by their soldiers");
+        assert_eq!(
+            p0.title,
+            "Zelenskyy taking a selfie in Kupiansk city after Russia claimed it was surrounded by their soldiers"
+        );
         assert_eq!(p0.subreddit, "pics");
         assert_eq!(p0.num_comments, 2033);
         // this sample is a self post and should not have a media URL
-        assert_eq!(p0.media_url.clone().expect("Media url could not be parsed"), "https://i.redd.it/izbbpf4a2s6g1.png");
+        assert_eq!(
+            p0.media_url.clone().expect("Media url could not be parsed"),
+            "https://i.redd.it/izbbpf4a2s6g1.png"
+        );
     }
 }

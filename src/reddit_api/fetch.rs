@@ -22,14 +22,24 @@ impl fmt::Display for FetchError {
 
 impl std::error::Error for FetchError {}
 
+pub fn create_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .user_agent("reddit-tui/0.1")
+        .build()
+        .unwrap()
+}
+pub fn create_client_blocking() -> reqwest::blocking::Client {
+    reqwest::blocking::Client::builder()
+        .user_agent("reddit-tui/0.1")
+        .build()
+        .unwrap()
+}
+
 /// Fetch content from either a local file (including file://) or HTTP(S).
 /// Returns the raw text on success or a `FetchError` on failure.
 pub async fn fetch_content(url: &str) -> Result<String, FetchError> {
     if url.starts_with("http://") || url.starts_with("https://") {
-        let client = reqwest::Client::builder()
-            .user_agent("reddit_tui/0.1")
-            .build()
-            .map_err(FetchError::Http)?;
+        let client = create_client();
         let resp = client.get(url).send().await.map_err(FetchError::Http)?;
         if !resp.status().is_success() {
             return Err(FetchError::Status(resp.status().as_u16()));
