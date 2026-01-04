@@ -288,6 +288,7 @@ pub fn draw_frame(f: &mut Frame, app: &mut App) {
             "Commands:",
             "  goto <subreddit>   — open subreddit (e.g. 'goto rust' or 'goto r/rust')",
             "  search <query>     — search reddit for a query",
+            "  view [caca]        — view media locally (Linux only)",
             "  open               — open focused post in browser",
             "  home               — go to reddit home",
             "  help, ?            — show this help",

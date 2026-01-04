@@ -240,26 +240,28 @@ pub fn view_media(post: &Post, mode: ViewMediaMode) -> Result<(), ViewMediaError
         post.title.hash(&mut hasher);
         let file_path = format!("/tmp/reddit_tui/reddit_media_{}", hasher.finish());
 
-        // download file
-        let client = create_client_blocking();
-        let resp = client
-            .get(media_url)
-            .send()
-            .map_err(|e| ViewMediaError::DownloadFailure(e.to_string()))?;
+        // download file if not already present
+        if !std::path::Path::new(&file_path).exists() {
+            let client = create_client_blocking();
+            let resp = client
+                .get(media_url)
+                .send()
+                .map_err(|e| ViewMediaError::DownloadFailure(e.to_string()))?;
 
-        if !resp.status().is_success() {
-            return Err(ViewMediaError::DownloadFailure(format!(
-                "HTTP status {}",
-                resp.status().as_u16()
-            )));
+            if !resp.status().is_success() {
+                return Err(ViewMediaError::DownloadFailure(format!(
+                    "HTTP status {}",
+                    resp.status().as_u16()
+                )));
+            }
+
+            let content = resp
+                .bytes()
+                .map_err(|e| ViewMediaError::DownloadFailure(e.to_string()))?;
+
+            std::fs::write(&file_path, &content).map_err(|e| ViewMediaError::IOError(e))?;
         }
-
-        let content = resp
-            .bytes()
-            .map_err(|e| ViewMediaError::DownloadFailure(e.to_string()))?;
-
-        std::fs::write(&file_path, &content).map_err(|e| ViewMediaError::IOError(e))?;
-
+        
         // view file
         match mode {
             ViewMediaMode::Default => Command::new("xdg-open")
