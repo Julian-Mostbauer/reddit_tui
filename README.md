@@ -12,6 +12,8 @@ Run `cargo build --release` to build the project locally
 
 ## Docker
 
+[Docker image can be found here](https://hub.docker.com/repository/docker/julianmostbauer/reddit_tui/general)
+
 Docker version is missing these features:
 - open post in browser
 - view a posts media locally
